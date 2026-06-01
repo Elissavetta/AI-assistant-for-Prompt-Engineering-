@@ -1,0 +1,273 @@
+const API = '/api';
+
+function getToken() {
+    return localStorage.getItem('token');
+}
+
+function headers() {
+    return {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+    };
+}
+
+async function fetchProfile() {
+    const res = await fetch(`${API}/profile/me`, { headers: headers() });
+    if (res.status === 401) {
+        window.location.href = '/login';
+        return null;
+    }
+    return await res.json();
+}
+
+async function fetchProgress() {
+    const res = await fetch(`${API}/profile/progress`, { headers: headers() });
+    return await res.json();
+}
+
+async function fetchAssignments() {
+    const res = await fetch(`${API}/assignments/`, { headers: headers() });
+    return await res.json();
+}
+
+function updateUI(profile, progress) {
+    if (!profile) return;
+
+    document.getElementById('user-score').textContent = profile.total_score;
+    document.getElementById('sidebar-score').textContent = profile.total_score;
+
+    const levelBadge = document.getElementById('level-badge');
+    const levels = {
+        newbie: { label: '🌱 Новичок', cls: 'level-newbie' },
+        intermediate: { label: '⚡ Средний', cls: 'level-intermediate' },
+        advanced: { label: '🏆 Продвинутый', cls: 'level-advanced' },
+    };
+    const lvl = levels[profile.level] || levels.newbie;
+    levelBadge.className = `level-badge ${lvl.cls}`;
+    levelBadge.textContent = lvl.label;
+
+    const progressList = document.getElementById('progress-list');
+    if (progress && progress.length > 0) {
+        progressList.innerHTML = progress.map(p => `
+            <div class="progress-bar-container">
+                <div class="progress-label">
+                    <span>${p.module_name}</span>
+                    <span>${p.score}/${p.max_score}</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-bar-fill" style="width: ${p.max_score > 0 ? (p.score / p.max_score * 100) : 0}%"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    const badgesList = document.getElementById('badges-list');
+    if (profile.badges && profile.badges.length > 0) {
+        badgesList.innerHTML = profile.badges.map(b => `
+            <span class="badge-item">${b}</span>
+        `).join('');
+    }
+
+    const modulesList = document.getElementById('modules-list');
+    const moduleNames = [
+        { id: 1, name: 'Структура промпта', icon: '🏗️', diff: 'newbie' },
+        { id: 2, name: 'Улучшение промптов', icon: '🔧', diff: 'newbie' },
+        { id: 3, name: 'Few-shot', icon: '🎯', diff: 'intermediate' },
+        { id: 4, name: 'Chain-of-thought', icon: '🧠', diff: 'intermediate' },
+        { id: 5, name: 'Форматирование', icon: '🎨', diff: 'advanced' },
+        { id: 6, name: 'Комплексный промпт', icon: '🏆', diff: 'advanced' },
+    ];
+    const completedModules = (progress || []).filter(p => p.completed).map(p => p.module_id);
+    modulesList.innerHTML = moduleNames.map(m => `
+        <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}">
+            <div class="module-icon">${completedModules.includes(m.id) ? '✅' : m.icon}</div>
+            <span>${m.name}</span>
+        </div>
+    `).join('');
+}
+
+let currentConversationId = null;
+let isLoading = false;
+
+async function sendMessage(text) {
+    if (!text.trim() || isLoading) return;
+    isLoading = true;
+
+    const sendBtn = document.getElementById('send-btn');
+    const chatInput = document.getElementById('chat-input');
+    sendBtn.disabled = true;
+    chatInput.value = '';
+
+    addMessageToUI('user', text);
+
+    const typingEl = addTypingIndicator();
+
+    try {
+        const res = await fetch(`${API}/chat/message`, {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({
+                conversation_id: currentConversationId,
+                message: text,
+            }),
+        });
+
+        const data = await res.json();
+
+        if (typingEl) typingEl.remove();
+
+        if (res.ok) {
+            currentConversationId = data.conversation_id;
+            addMessageToUI('assistant', data.response, data.agent);
+            await refreshProfile();
+        } else {
+            addMessageToUI('assistant', 'Произошла ошибка. Попробуй ещё раз.', 'SYSTEM');
+        }
+    } catch (err) {
+        if (typingEl) typingEl.remove();
+        addMessageToUI('assistant', 'Ошибка подключения к серверу.', 'SYSTEM');
+    }
+
+    isLoading = false;
+    sendBtn.disabled = false;
+    chatInput.focus();
+}
+
+function addMessageToUI(role, content, agent = '') {
+    const messages = document.getElementById('chat-messages');
+    const welcome = document.getElementById('welcome-screen');
+    if (welcome) welcome.style.display = 'none';
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message message-${role}`;
+
+    if (role === 'user') {
+        msgDiv.innerHTML = `<div class="message-bubble">${escapeHtml(content)}</div>`;
+    } else {
+        const avatarClass = agent === 'PROFILER' ? 'avatar-profiler' :
+                            agent === 'EVALUATOR' ? 'avatar-evaluator' : 'avatar-tutor';
+        const avatarEmoji = agent === 'PROFILER' ? '🔍' :
+                           agent === 'EVALUATOR' ? '⭐' : '📚';
+        const labelClass = agent === 'PROFILER' ? 'agent-label-profiler' :
+                          agent === 'EVALUATOR' ? 'agent-label-evaluator' : 'agent-label-tutor';
+        const agentName = agent === 'PROFILER' ? 'Профайлер' :
+                         agent === 'EVALUATOR' ? 'Оценщик' :
+                         agent === 'TUTOR' ? 'Тьютор' : 'Система';
+
+        msgDiv.innerHTML = `
+            <div class="agent-avatar ${avatarClass}">${avatarEmoji}</div>
+            <div>
+                <div class="agent-label ${labelClass}">${agentName}</div>
+                <div class="message-bubble">${renderMarkdown(content)}</div>
+            </div>
+        `;
+    }
+
+    messages.appendChild(msgDiv);
+    scrollToBottom();
+}
+
+function addTypingIndicator() {
+    const messages = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = 'message message-assistant';
+    div.innerHTML = `
+        <div class="agent-avatar avatar-tutor">📚</div>
+        <div class="message-bubble">
+            <div class="agent-label agent-label-tutor">Тьютор</div>
+            <div class="typing-indicator">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    `;
+    messages.appendChild(div);
+    scrollToBottom();
+    return div;
+}
+
+function scrollToBottom() {
+    const container = document.getElementById('chat-container');
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderMarkdown(text) {
+    let html = escapeHtml(text);
+
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+}
+
+async function refreshProfile() {
+    const profile = await fetchProfile();
+    const progress = await fetchProgress();
+    updateUI(profile, progress);
+}
+
+async function init() {
+    const token = getToken();
+    if (!token) {
+        window.location.href = '/login';
+        return;
+    }
+
+    await refreshProfile();
+
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+
+    chatInput.addEventListener('input', () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = chatInput.scrollHeight + 'px';
+        sendBtn.disabled = !chatInput.value.trim();
+    });
+
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage(chatInput.value);
+        }
+    });
+
+    sendBtn.addEventListener('click', () => {
+        sendMessage(chatInput.value);
+    });
+
+    document.getElementById('start-btn').addEventListener('click', () => {
+        sendMessage('Привет! Я хочу научиться писать хорошие промпты для AI.');
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+    });
+
+    document.getElementById('nav-assignments').addEventListener('click', async (e) => {
+        e.preventDefault();
+        const assignments = await fetchAssignments();
+        if (assignments && assignments.length > 0) {
+            sendMessage(`Покажи мне список заданий по модулю ${assignments[0].module_id}`);
+        }
+    });
+
+    chatInput.focus();
+}
+
+document.addEventListener('DOMContentLoaded', init);

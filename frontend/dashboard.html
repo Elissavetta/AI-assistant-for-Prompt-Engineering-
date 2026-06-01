@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Prompt Trainer — Дашборд</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container header-inner">
+            <a href="/dashboard" class="logo">
+                <div class="logo-icon">🤖</div>
+                <span>Prompt Trainer</span>
+            </a>
+            <div class="nav-links">
+                <a href="/dashboard" class="active">Обучение</a>
+                <a href="#" id="nav-assignments">Задания</a>
+                <div class="user-badge" id="user-badge">
+                    <span>⭐</span>
+                    <span id="user-score">0</span>
+                </div>
+                <a href="#" id="logout-btn" style="color: var(--text-muted); font-size: 13px;">Выйти</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="dashboard-layout">
+        <aside class="sidebar">
+            <div class="sidebar-section">
+                <div class="score-display">
+                    <div class="score-number" id="sidebar-score">0</div>
+                    <div class="score-label">очков</div>
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Уровень</h3>
+                <div id="level-badge" class="level-badge level-newbie">🌱 Новичок</div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Прогресс</h3>
+                <div id="progress-list"></div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Бейджи</h3>
+                <div class="badges-section" id="badges-list">
+                    <span style="color: var(--text-muted); font-size: 13px;">Пока нет бейджей</span>
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Модули</h3>
+                <div id="modules-list"></div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="chat-container" id="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="welcome-screen" id="welcome-screen">
+                        <h2>Привет! Я твой AI-тренажёр 🚀</h2>
+                        <p>Я помогу тебе освоить промпт-инжиниринг — от основ до продвинутых техник. Напиши что-нибудь, и мы начнём!</p>
+                        <button class="btn btn-primary" id="start-btn">Начать обучение</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <textarea id="chat-input" placeholder="Напиши сообщение..." rows="1"></textarea>
+                    <button class="send-btn" id="send-btn" disabled>➤</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
