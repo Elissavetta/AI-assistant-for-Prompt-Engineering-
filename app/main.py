@@ -34,7 +34,7 @@ def _seed_assignments():
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="AI Prompt Engineering Trainer — обучающий тренажёр промпт-инжиниринга",
+    description="PROMPT UP — обучающий тренажёр промпт-инжиниринга",
     version="1.0.0",
     lifespan=lifespan,
 )

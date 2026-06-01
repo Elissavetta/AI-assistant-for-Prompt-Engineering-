@@ -100,10 +100,10 @@ async function sendMessage(text) {
 
     addMessageToUI('user', text);
 
-    const typingEl = addTypingIndicator();
+    const streamingEl = addStreamingMessage();
 
     try {
-        const res = await fetch(`${API}/chat/message`, {
+        const res = await fetch(`${API}/chat/message/stream`, {
             method: 'POST',
             headers: headers(),
             body: JSON.stringify({
@@ -112,19 +112,46 @@ async function sendMessage(text) {
             }),
         });
 
-        const data = await res.json();
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        let agent = 'TUTOR';
+        let score = null;
 
-        if (typingEl) typingEl.remove();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        if (res.ok) {
-            currentConversationId = data.conversation_id;
-            addMessageToUI('assistant', data.response, data.agent);
-            await refreshProfile();
-        } else {
-            addMessageToUI('assistant', 'Произошла ошибка. Попробуй ещё раз.', 'SYSTEM');
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.agent) {
+                        agent = data.agent;
+                        updateStreamingAgent(streamingEl, agent);
+                    }
+
+                    if (data.token) {
+                        fullText += data.token;
+                        updateStreamingText(streamingEl, fullText);
+                    }
+
+                    if (data.done) {
+                        score = data.score || null;
+                    }
+                } catch (e) {}
+            }
         }
+
+        finalizeStreamingMessage(streamingEl, fullText, agent);
+        currentConversationId = currentConversationId;
+        await refreshProfile();
     } catch (err) {
-        if (typingEl) typingEl.remove();
+        streamingEl.remove();
         addMessageToUI('assistant', 'Ошибка подключения к серверу.', 'SYSTEM');
     }
 
@@ -167,22 +194,53 @@ function addMessageToUI(role, content, agent = '') {
     scrollToBottom();
 }
 
-function addTypingIndicator() {
+function addStreamingMessage() {
     const messages = document.getElementById('chat-messages');
-    const div = document.createElement('div');
-    div.className = 'message message-assistant';
-    div.innerHTML = `
+    const welcome = document.getElementById('welcome-screen');
+    if (welcome) welcome.style.display = 'none';
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message message-assistant';
+    msgDiv.innerHTML = `
         <div class="agent-avatar avatar-tutor">📚</div>
-        <div class="message-bubble">
+        <div>
             <div class="agent-label agent-label-tutor">Тьютор</div>
-            <div class="typing-indicator">
-                <span></span><span></span><span></span>
+            <div class="message-bubble">
+                <div class="typing-indicator"><span></span><span></span><span></span></div>
             </div>
         </div>
     `;
-    messages.appendChild(div);
+    messages.appendChild(msgDiv);
     scrollToBottom();
-    return div;
+    return msgDiv;
+}
+
+function updateStreamingAgent(el, agent) {
+    const avatar = el.querySelector('.agent-avatar');
+    const label = el.querySelector('.agent-label');
+    const configs = {
+        PROFILER: { cls: 'avatar-profiler', emoji: '🔍', label: 'Профайлер', labelCls: 'agent-label-profiler' },
+        EVALUATOR: { cls: 'avatar-evaluator', emoji: '⭐', label: 'Оценщик', labelCls: 'agent-label-evaluator' },
+        TUTOR: { cls: 'avatar-tutor', emoji: '📚', label: 'Тьютор', labelCls: 'agent-label-tutor' },
+    };
+    const cfg = configs[agent] || configs.TUTOR;
+    avatar.className = `agent-avatar ${cfg.cls}`;
+    avatar.textContent = cfg.emoji;
+    label.className = `agent-label ${cfg.labelCls}`;
+    label.textContent = cfg.label;
+}
+
+function updateStreamingText(el, text) {
+    const bubble = el.querySelector('.message-bubble');
+    const typing = el.querySelector('.typing-indicator');
+    if (typing) typing.remove();
+    bubble.innerHTML = renderMarkdown(text);
+    scrollToBottom();
+}
+
+function finalizeStreamingMessage(el, text, agent) {
+    updateStreamingText(el, text);
+    updateStreamingAgent(el, agent);
 }
 
 function scrollToBottom() {

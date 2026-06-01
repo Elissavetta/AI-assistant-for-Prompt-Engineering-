@@ -1,5 +1,6 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -53,14 +54,7 @@ async def send_message(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not chat_data.conversation_id:
-        conv = create_conversation(db, user.id)
-        chat_data.conversation_id = conv.id
-    else:
-        conv = get_conversation(db, chat_data.conversation_id)
-        if not conv or conv.user_id != user.id:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-
+    conv = _ensure_conversation(db, chat_data, user)
     add_message(db, conv.id, "user", chat_data.message)
 
     db_messages = get_conversation_messages(db, conv.id)
@@ -113,6 +107,50 @@ async def send_message(
     }
 
 
+@router.post("/message/stream")
+async def send_message_stream(
+    chat_data: ChatMessage,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    conv = _ensure_conversation(db, chat_data, user)
+    add_message(db, conv.id, "user", chat_data.message)
+
+    db_messages = get_conversation_messages(db, conv.id)
+    openai_messages = messages_to_openai_format(db_messages)
+
+    is_submission = "EVALUATE_SUBMISSION" in chat_data.message or _detect_submission(openai_messages)
+
+    user_context = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
+
+    assignment_context = ""
+    current_assignment = db.query(Assignment).filter(
+        Assignment.difficulty == user.level
+    ).order_by(Assignment.order_num).first()
+    if current_assignment:
+        assignment_context = f"Текущее задание: {current_assignment.title}\nКритерии: {current_assignment.criteria}"
+
+    agent_name = orchestrator.determine_agent(user.level, openai_messages, is_submission)
+    system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
+
+    async def generate():
+        full_response = []
+        yield f"data: {json.dumps({'agent': agent_name}, ensure_ascii=False)}\n\n"
+        async for token in stream_llm(system_prompt, openai_messages, temperature, max_tokens):
+            full_response.append(token)
+            yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+        response_text = "".join(full_response)
+        add_message(db, conv.id, "assistant", response_text, agent_name)
+        _update_user(db, user, agent_name, response_text)
+        score = None
+        if agent_name == "EVALUATOR":
+            from app.agents.evaluator import EvaluatorAgent
+            score = EvaluatorAgent.extract_score(response_text)
+        yield f"data: {json.dumps({'done': True, 'score': score}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 @router.get("/{conversation_id}/messages")
 def get_messages(
     conversation_id: str,
@@ -135,6 +173,17 @@ def get_messages(
     ]
 
 
+def _ensure_conversation(db: Session, chat_data: ChatMessage, user: User) -> Conversation:
+    if not chat_data.conversation_id:
+        conv = create_conversation(db, user.id)
+        chat_data.conversation_id = conv.id
+        return conv
+    conv = get_conversation(db, chat_data.conversation_id)
+    if not conv or conv.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
 def _detect_submission(messages: list[dict]) -> bool:
     if len(messages) < 2:
         return False
@@ -142,3 +191,42 @@ def _detect_submission(messages: list[dict]) -> bool:
         if msg["role"] == "assistant" and "Задание:" in msg["content"]:
             return True
     return False
+
+
+def _get_agent_config(agent_name: str, user_context: str, assignment_context: str) -> tuple[str, float, int]:
+    if agent_name == "PROFILER":
+        from app.prompts.profiler_prompt import PROFILER_SYSTEM_PROMPT
+        return PROFILER_SYSTEM_PROMPT, 0.5, 500
+    elif agent_name == "EVALUATOR":
+        from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
+        system = EVALUATOR_SYSTEM_PROMPT
+        if assignment_context:
+            system += f"\n\nКОНТЕКСТ ЗАДАНИЯ:\n{assignment_context}"
+        return system, 0.3, 800
+    else:
+        from app.prompts.tutor_prompt import TUTOR_SYSTEM_PROMPT
+        system = TUTOR_SYSTEM_PROMPT
+        if user_context:
+            system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
+        return system, 0.6, 800
+
+
+def _update_user(db: Session, user: User, agent_name: str, response: str):
+    if agent_name == "PROFILER":
+        from app.agents.profiler import ProfilerAgent
+        profile_data = ProfilerAgent.parse_profile(response)
+        if profile_data.get("level") and "УРОВЕНЬ:" in response.upper():
+            user.level = profile_data["level"]
+            if profile_data.get("sphere"):
+                user.sphere = profile_data["sphere"]
+            if profile_data.get("goals"):
+                user.goals = profile_data["goals"]
+            db.commit()
+    elif agent_name == "EVALUATOR":
+        from app.agents.evaluator import EvaluatorAgent
+        score = EvaluatorAgent.extract_score(response)
+        points = score_to_points(score)
+        current_total = int(user.total_score) + points
+        user.total_score = str(current_total)
+        user.level = calculate_level(current_total)
+        db.commit()

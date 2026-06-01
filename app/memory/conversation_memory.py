@@ -50,10 +50,14 @@ def get_conversation_messages(db: Session, conversation_id: str, limit: int = No
 
 
 def messages_to_openai_format(messages: list[Message]) -> list[dict]:
+    recent = messages[-settings.MAX_CONVERSATION_HISTORY:]
     result = []
-    for msg in messages[-settings.MAX_CONVERSATION_HISTORY:]:
+    for msg in recent:
+        content = msg.content
+        if len(content) > 500:
+            content = content[:500] + "..."
         result.append({
             "role": msg.role,
-            "content": msg.content,
+            "content": content,
         })
     return result
