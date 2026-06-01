@@ -442,7 +442,6 @@ a:hover {
 
 .message {
     margin-bottom: 20px;
-    animation: fadeIn 0.3s ease;
 }
 
 @keyframes fadeIn {
@@ -501,6 +500,8 @@ a:hover {
 .message-bubble {
     padding: 14px 18px;
     line-height: 1.6;
+    contain: content;
+    will-change: contents;
 }
 
 .message-bubble h1, .message-bubble h2, .message-bubble h3 {

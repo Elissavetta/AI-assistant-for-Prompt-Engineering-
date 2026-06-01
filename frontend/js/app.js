@@ -89,6 +89,69 @@ function updateUI(profile, progress) {
 let currentConversationId = null;
 let isLoading = false;
 
+function createTypewriter(el) {
+    const bubble = el.querySelector('.message-bubble');
+    let rawBuffer = '';
+    let displayedLen = 0;
+    let rafId = null;
+    let lastRender = 0;
+    const RENDER_INTERVAL = 80;
+    const CHARS_PER_FRAME = 3;
+    let finished = false;
+
+    function render() {
+        const typing = el.querySelector('.typing-indicator');
+        if (typing) typing.remove();
+        bubble.innerHTML = renderMarkdown(rawBuffer.slice(0, displayedLen));
+        scrollToBottom();
+    }
+
+    function tick(now) {
+        if (finished) return;
+
+        if (displayedLen < rawBuffer.length) {
+            displayedLen = Math.min(displayedLen + CHARS_PER_FRAME, rawBuffer.length);
+        }
+
+        if (now - lastRender >= RENDER_INTERVAL) {
+            render();
+            lastRender = now;
+        }
+
+        if (displayedLen < rawBuffer.length) {
+            rafId = requestAnimationFrame(tick);
+        } else {
+            render();
+            rafId = null;
+        }
+    }
+
+    function ensureLoop() {
+        if (rafId === null && !finished) {
+            rafId = requestAnimationFrame(tick);
+        }
+    }
+
+    return {
+        push(text) {
+            rawBuffer += text;
+            ensureLoop();
+        },
+        stop() {
+            finished = true;
+            if (rafId !== null) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+            displayedLen = rawBuffer.length;
+            render();
+        },
+        getFullText() {
+            return rawBuffer;
+        }
+    };
+}
+
 async function sendMessage(text) {
     if (!text.trim() || isLoading) return;
     isLoading = true;
@@ -101,6 +164,7 @@ async function sendMessage(text) {
     addMessageToUI('user', text);
 
     const streamingEl = addStreamingMessage();
+    const typewriter = createTypewriter(streamingEl);
 
     try {
         const res = await fetch(`${API}/chat/message/stream`, {
@@ -114,7 +178,6 @@ async function sendMessage(text) {
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = '';
         let agent = 'TUTOR';
         let score = null;
 
@@ -136,8 +199,7 @@ async function sendMessage(text) {
                     }
 
                     if (data.token) {
-                        fullText += data.token;
-                        updateStreamingText(streamingEl, fullText);
+                        typewriter.push(data.token);
                     }
 
                     if (data.done) {
@@ -147,10 +209,12 @@ async function sendMessage(text) {
             }
         }
 
-        finalizeStreamingMessage(streamingEl, fullText, agent);
+        typewriter.stop();
+        finalizeStreamingMessage(streamingEl, typewriter.getFullText(), agent);
         currentConversationId = currentConversationId;
         await refreshProfile();
     } catch (err) {
+        typewriter.stop();
         streamingEl.remove();
         addMessageToUI('assistant', 'Ошибка подключения к серверу.', 'SYSTEM');
     }
@@ -239,7 +303,6 @@ function updateStreamingText(el, text) {
 }
 
 function finalizeStreamingMessage(el, text, agent) {
-    updateStreamingText(el, text);
     updateStreamingAgent(el, agent);
 }
 
@@ -256,6 +319,8 @@ function escapeHtml(text) {
 
 function renderMarkdown(text) {
     let html = escapeHtml(text);
+
+    html = html.replace(/\[ОЖИДАЕТСЯ ОТВЕТ\]/g, '');
 
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');

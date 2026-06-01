@@ -53,11 +53,8 @@ def messages_to_openai_format(messages: list[Message]) -> list[dict]:
     recent = messages[-settings.MAX_CONVERSATION_HISTORY:]
     result = []
     for msg in recent:
-        content = msg.content
-        if len(content) > 500:
-            content = content[:500] + "..."
         result.append({
             "role": msg.role,
-            "content": content,
+            "content": msg.content,
         })
     return result

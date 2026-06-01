@@ -40,7 +40,13 @@ async def call_llm(
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     message = response.choices[0].message
-    return message.content or getattr(message, "reasoning_content", None) or ""
+    content = message.content
+    if content:
+        return content
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning:
+        return reasoning
+    return ""
 
 
 async def stream_llm(
@@ -60,6 +66,10 @@ async def stream_llm(
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     async for chunk in stream:
-        delta = chunk.choices[0].delta if chunk.choices else None
-        if delta and delta.content:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta.content:
             yield delta.content
+        elif hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            pass

@@ -14,7 +14,7 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    level = Column(String, default="newbie")
+    level = Column(String, default="")
     sphere = Column(String, default="")
     goals = Column(String, default="")
     total_score = Column(String, default="0")

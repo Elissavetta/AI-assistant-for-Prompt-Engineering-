@@ -20,12 +20,14 @@ from app.memory.conversation_memory import (
     get_conversation_messages,
     messages_to_openai_format,
 )
-from app.agents.orchestrator import OrchestratorAgent
+from app.agents.llm_client import stream_llm
+from app.agents.profiler import ProfilerAgent
+from app.agents.evaluator import EvaluatorAgent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 security = HTTPBearer()
 
-orchestrator = OrchestratorAgent()
+AWAITING_RESPONSE = "[ОЖИДАЕТСЯ ОТВЕТ]"
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
@@ -37,6 +39,60 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+def _determine_agent(user_level: str, openai_messages: list[dict], is_submission_keyword: bool) -> str:
+    if not user_level:
+        return "PROFILER"
+
+    if _is_awaiting_submission(openai_messages):
+        return "EVALUATOR"
+
+    return "TUTOR"
+
+
+def _is_awaiting_submission(messages: list[dict]) -> bool:
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            return AWAITING_RESPONSE in msg.get("content", "")
+    return False
+
+
+def _get_agent_config(agent_name: str, user_context: str, assignment_context: str) -> tuple[str, float, int]:
+    if agent_name == "PROFILER":
+        from app.prompts.profiler_prompt import PROFILER_SYSTEM_PROMPT
+        return PROFILER_SYSTEM_PROMPT, 0.5, 250
+    elif agent_name == "EVALUATOR":
+        from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
+        system = EVALUATOR_SYSTEM_PROMPT
+        if assignment_context:
+            system += f"\n\nКОНТЕКСТ ЗАДАНИЯ:\n{assignment_context}"
+        return system, 0.3, 450
+    else:
+        from app.prompts.tutor_prompt import TUTOR_SYSTEM_PROMPT
+        system = TUTOR_SYSTEM_PROMPT
+        if user_context:
+            system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
+        return system, 0.6, 500
+
+
+def _update_user(db: Session, user: User, agent_name: str, response: str):
+    if agent_name == "PROFILER":
+        profile_data = ProfilerAgent.parse_profile(response)
+        if profile_data.get("level") and "УРОВЕНЬ:" in response.upper():
+            user.level = profile_data["level"]
+            if profile_data.get("sphere"):
+                user.sphere = profile_data["sphere"]
+            if profile_data.get("goals"):
+                user.goals = profile_data["goals"]
+            db.commit()
+    elif agent_name == "EVALUATOR":
+        score = EvaluatorAgent.extract_score(response)
+        points = score_to_points(score)
+        current_total = int(user.total_score) + points
+        user.total_score = str(current_total)
+        user.level = calculate_level(current_total)
+        db.commit()
 
 
 @router.get("/conversations")
@@ -60,7 +116,8 @@ async def send_message(
     db_messages = get_conversation_messages(db, conv.id)
     openai_messages = messages_to_openai_format(db_messages)
 
-    is_submission = "EVALUATE_SUBMISSION" in chat_data.message or _detect_submission(openai_messages)
+    is_submission_keyword = "EVALUATE_SUBMISSION" in chat_data.message
+    agent_name = _determine_agent(user.level, openai_messages, is_submission_keyword)
 
     user_context = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
 
@@ -71,39 +128,23 @@ async def send_message(
     if current_assignment:
         assignment_context = f"Текущее задание: {current_assignment.title}\nКритерии: {current_assignment.criteria}"
 
-    result = await orchestrator.route(
-        messages=openai_messages,
-        user_level=user.level,
-        user_context=user_context,
-        assignment_context=assignment_context,
-        is_submission=is_submission,
-    )
+    system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
 
-    add_message(db, conv.id, "assistant", result["response"], result["agent"])
+    from app.agents.llm_client import call_llm
+    response = await call_llm(system_prompt, openai_messages, temperature, max_tokens)
 
-    if result["agent"] == "PROFILER":
-        profile_data = result.get("profile_data", {})
-        if profile_data.get("level") and "УРОВЕНЬ:" in result["response"].upper():
-            user.level = profile_data["level"]
-            if profile_data.get("sphere"):
-                user.sphere = profile_data["sphere"]
-            if profile_data.get("goals"):
-                user.goals = profile_data["goals"]
-            db.commit()
+    add_message(db, conv.id, "assistant", response, agent_name)
+    _update_user(db, user, agent_name, response)
 
-    if result["agent"] == "EVALUATOR":
-        score = result.get("score", 0)
-        points = score_to_points(score)
-        current_total = int(user.total_score) + points
-        user.total_score = str(current_total)
-        user.level = calculate_level(current_total)
-        db.commit()
+    score = None
+    if agent_name == "EVALUATOR":
+        score = EvaluatorAgent.extract_score(response)
 
     return {
         "conversation_id": conv.id,
-        "agent": result["agent"],
-        "response": result["response"],
-        "score": result.get("score"),
+        "agent": agent_name,
+        "response": response,
+        "score": score,
     }
 
 
@@ -119,7 +160,8 @@ async def send_message_stream(
     db_messages = get_conversation_messages(db, conv.id)
     openai_messages = messages_to_openai_format(db_messages)
 
-    is_submission = "EVALUATE_SUBMISSION" in chat_data.message or _detect_submission(openai_messages)
+    is_submission_keyword = "EVALUATE_SUBMISSION" in chat_data.message
+    agent_name = _determine_agent(user.level, openai_messages, is_submission_keyword)
 
     user_context = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
 
@@ -130,7 +172,6 @@ async def send_message_stream(
     if current_assignment:
         assignment_context = f"Текущее задание: {current_assignment.title}\nКритерии: {current_assignment.criteria}"
 
-    agent_name = orchestrator.determine_agent(user.level, openai_messages, is_submission)
     system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
 
     async def generate():
@@ -144,7 +185,6 @@ async def send_message_stream(
         _update_user(db, user, agent_name, response_text)
         score = None
         if agent_name == "EVALUATOR":
-            from app.agents.evaluator import EvaluatorAgent
             score = EvaluatorAgent.extract_score(response_text)
         yield f"data: {json.dumps({'done': True, 'score': score}, ensure_ascii=False)}\n\n"
 
@@ -182,51 +222,3 @@ def _ensure_conversation(db: Session, chat_data: ChatMessage, user: User) -> Con
     if not conv or conv.user_id != user.id:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
-
-
-def _detect_submission(messages: list[dict]) -> bool:
-    if len(messages) < 2:
-        return False
-    for msg in messages[-3:]:
-        if msg["role"] == "assistant" and "Задание:" in msg["content"]:
-            return True
-    return False
-
-
-def _get_agent_config(agent_name: str, user_context: str, assignment_context: str) -> tuple[str, float, int]:
-    if agent_name == "PROFILER":
-        from app.prompts.profiler_prompt import PROFILER_SYSTEM_PROMPT
-        return PROFILER_SYSTEM_PROMPT, 0.5, 500
-    elif agent_name == "EVALUATOR":
-        from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
-        system = EVALUATOR_SYSTEM_PROMPT
-        if assignment_context:
-            system += f"\n\nКОНТЕКСТ ЗАДАНИЯ:\n{assignment_context}"
-        return system, 0.3, 800
-    else:
-        from app.prompts.tutor_prompt import TUTOR_SYSTEM_PROMPT
-        system = TUTOR_SYSTEM_PROMPT
-        if user_context:
-            system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
-        return system, 0.6, 800
-
-
-def _update_user(db: Session, user: User, agent_name: str, response: str):
-    if agent_name == "PROFILER":
-        from app.agents.profiler import ProfilerAgent
-        profile_data = ProfilerAgent.parse_profile(response)
-        if profile_data.get("level") and "УРОВЕНЬ:" in response.upper():
-            user.level = profile_data["level"]
-            if profile_data.get("sphere"):
-                user.sphere = profile_data["sphere"]
-            if profile_data.get("goals"):
-                user.goals = profile_data["goals"]
-            db.commit()
-    elif agent_name == "EVALUATOR":
-        from app.agents.evaluator import EvaluatorAgent
-        score = EvaluatorAgent.extract_score(response)
-        points = score_to_points(score)
-        current_total = int(user.total_score) + points
-        user.total_score = str(current_total)
-        user.level = calculate_level(current_total)
-        db.commit()
