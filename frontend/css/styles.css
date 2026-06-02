@@ -821,3 +821,39 @@ a:hover {
         padding: 32px 24px;
     }
 }
+
+.score-notification {
+    position: fixed;
+    top: 90px;
+    right: 24px;
+    background: linear-gradient(135deg, #FFC800, #EB7000);
+    color: #141414;
+    padding: 14px 22px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 18px;
+    box-shadow: 0 8px 32px rgba(255, 200, 0, 0.4);
+    z-index: 1000;
+    animation: scoreSlideIn 0.3s ease;
+}
+
+.score-notification-total {
+    font-size: 12px;
+    font-weight: 500;
+    margin-top: 2px;
+    opacity: 0.8;
+}
+
+.score-notification-hide {
+    animation: scoreSlideOut 0.4s ease forwards;
+}
+
+@keyframes scoreSlideIn {
+    from { opacity: 0; transform: translateX(60px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scoreSlideOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(60px); }
+}

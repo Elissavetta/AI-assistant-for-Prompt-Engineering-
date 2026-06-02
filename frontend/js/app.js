@@ -79,11 +79,15 @@ function updateUI(profile, progress) {
     ];
     const completedModules = (progress || []).filter(p => p.completed).map(p => p.module_id);
     modulesList.innerHTML = moduleNames.map(m => `
-        <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}">
+        <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}" onclick="selectModule(${m.id}, '${m.name}')">
             <div class="module-icon">${completedModules.includes(m.id) ? '✅' : m.icon}</div>
             <span>${m.name}</span>
         </div>
     `).join('');
+}
+
+function selectModule(moduleId, moduleName) {
+    sendMessage(`Хочу пройти модуль ${moduleId}: ${moduleName}`);
 }
 
 let currentConversationId = null;
@@ -198,12 +202,19 @@ async function sendMessage(text) {
                         updateStreamingAgent(streamingEl, agent);
                     }
 
+                    if (data.conversation_id) {
+                        currentConversationId = data.conversation_id;
+                    }
+
                     if (data.token) {
                         typewriter.push(data.token);
                     }
 
                     if (data.done) {
                         score = data.score || null;
+                        if (data.points && data.points > 0) {
+                            showScoreNotification(data.points, data.total_score);
+                        }
                     }
                 } catch (e) {}
             }
@@ -211,7 +222,6 @@ async function sendMessage(text) {
 
         typewriter.stop();
         finalizeStreamingMessage(streamingEl, typewriter.getFullText(), agent);
-        currentConversationId = currentConversationId;
         await refreshProfile();
     } catch (err) {
         typewriter.stop();
@@ -321,6 +331,7 @@ function renderMarkdown(text) {
     let html = escapeHtml(text);
 
     html = html.replace(/\[ОЖИДАЕТСЯ ОТВЕТ\]/g, '');
+    html = html.replace(/\[ОЖИДАЕТСЯ ВЫБОР\]/g, '');
 
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -341,6 +352,19 @@ async function refreshProfile() {
     const profile = await fetchProfile();
     const progress = await fetchProgress();
     updateUI(profile, progress);
+}
+
+function showScoreNotification(points, totalScore) {
+    const existing = document.querySelector('.score-notification');
+    if (existing) existing.remove();
+
+    const notif = document.createElement('div');
+    notif.className = 'score-notification';
+    notif.innerHTML = `⭐ +${points} баллов<div class="score-notification-total">Всего: ${totalScore}</div>`;
+    document.body.appendChild(notif);
+
+    setTimeout(() => { notif.classList.add('score-notification-hide'); }, 2500);
+    setTimeout(() => { notif.remove(); }, 3000);
 }
 
 async function init() {

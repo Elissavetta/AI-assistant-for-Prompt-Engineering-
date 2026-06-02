@@ -11,7 +11,7 @@ from app.models.assignment import Assignment, Submission
 from app.models.progress import Progress
 from app.schemas.chat import ChatMessage, MessageOut
 from app.services.auth_service import decode_access_token
-from app.services.scoring_service import calculate_level, score_to_points, MODULE_NAMES, MODULE_BADGES
+from app.services.scoring_service import calculate_level, score_to_points, MODULE_NAMES, MODULE_BADGES, get_module_badge
 from app.memory.conversation_memory import (
     create_conversation,
     get_conversation,
@@ -20,14 +20,31 @@ from app.memory.conversation_memory import (
     get_conversation_messages,
     messages_to_openai_format,
 )
-from app.agents.llm_client import stream_llm
+from app.agents.llm_client import stream_llm, call_llm
 from app.agents.profiler import ProfilerAgent
 from app.agents.evaluator import EvaluatorAgent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 security = HTTPBearer()
 
-AWAITING_RESPONSE = "[ОЖИДАЕТСЯ ОТВЕТ]"
+AWAITING_ANSWER = "[ОЖИДАЕТСЯ ОТВЕТ]"
+AWAITING_CHOICE = "[ОЖИДАЕТСЯ ВЫБОР]"
+PROFILER_MAX_TURNS = 4
+
+
+def _force_profile_completion(db: Session, user: User, openai_messages: list[dict]) -> bool:
+    if user.level:
+        return False
+    assistant_turns = sum(1 for m in openai_messages if m.get("role") == "assistant")
+    if assistant_turns >= PROFILER_MAX_TURNS:
+        user.level = "newbie"
+        if not user.sphere:
+            user.sphere = "общее"
+        if not user.goals:
+            user.goals = "научиться писать промпты"
+        db.commit()
+        return True
+    return False
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
@@ -41,21 +58,98 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     return user
 
 
-def _determine_agent(user_level: str, openai_messages: list[dict], is_submission_keyword: bool) -> str:
+def _detect_awaiting_state(messages: list[dict]) -> str:
+    last_assistant = None
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            last_assistant = msg.get("content", "")
+            break
+    if not last_assistant:
+        return ""
+    if AWAITING_ANSWER in last_assistant:
+        return "ANSWER"
+    if AWAITING_CHOICE in last_assistant:
+        return "CHOICE"
+    if any(kw in last_assistant for kw in ["🎯 **Задание:**", "🎯**Задание:**", "Задание:**"]):
+        if "SCORE:" not in last_assistant:
+            return "ANSWER"
+    return ""
+
+
+def _is_user_submission(user_message: str) -> bool:
+    return len(user_message.strip()) > 30
+
+
+def _is_user_wants_more(user_message: str) -> bool:
+    positive = ["да", "хочу", "давай", "ещё", "еще", "конечно", "давай", "yes", "next", "дальше"]
+    text = user_message.strip().lower()
+    return any(p in text for p in positive)
+
+
+def _determine_agent(user_level: str, openai_messages: list[dict], user_message: str = "") -> str:
     if not user_level:
         return "PROFILER"
 
-    if _is_awaiting_submission(openai_messages):
-        return "EVALUATOR"
+    state = _detect_awaiting_state(openai_messages)
+
+    if state == "ANSWER" and _is_user_submission(user_message):
+        return "EVALUATOR_THEN_TUTOR"
+
+    if state == "CHOICE" and _is_user_wants_more(user_message):
+        return "TUTOR"
 
     return "TUTOR"
 
 
-def _is_awaiting_submission(messages: list[dict]) -> bool:
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            return AWAITING_RESPONSE in msg.get("content", "")
-    return False
+LEVEL_TO_MODULE = {"newbie": 1, "intermediate": 3, "advanced": 5}
+
+MODULE_ORDER = [1, 2, 3, 4, 5, 6]
+
+
+def _get_current_module_id(level: str) -> int:
+    return LEVEL_TO_MODULE.get(level, 1)
+
+
+def _get_next_module(user_id: str, db: Session) -> int:
+    for mid in MODULE_ORDER:
+        progress = db.query(Progress).filter(
+            Progress.user_id == user_id,
+            Progress.module_id == mid,
+        ).first()
+        if not progress or not progress.completed:
+            return mid
+    return MODULE_ORDER[-1]
+
+
+def _build_user_context(user: User, db: Session, eval_context: str = "") -> str:
+    ctx = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
+    current_module = _get_next_module(user.id, db)
+    progress = db.query(Progress).filter(
+        Progress.user_id == user.id,
+        Progress.module_id == current_module,
+    ).first()
+    if progress:
+        ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Баллов: {progress.score}/{progress.max_score}"
+        if progress.completed:
+            ctx += " [ЗАВЕРШЁН]"
+    else:
+        ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Новый модуль"
+
+    completed_ids = []
+    for mid in MODULE_ORDER:
+        p = db.query(Progress).filter(
+            Progress.user_id == user.id,
+            Progress.module_id == mid,
+        ).first()
+        if p and p.completed:
+            completed_ids.append(mid)
+    if completed_ids:
+        ctx += f", Завершённые модули: {completed_ids}"
+
+    if eval_context:
+        ctx += f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_context}"
+
+    return ctx
 
 
 def _get_agent_config(agent_name: str, user_context: str, assignment_context: str) -> tuple[str, float, int]:
@@ -76,6 +170,56 @@ def _get_agent_config(agent_name: str, user_context: str, assignment_context: st
         return system, 0.6, 500
 
 
+async def _evaluate_then_tutor(
+    openai_messages: list[dict],
+    user: User,
+    db: Session,
+    conv_id: str,
+    assignment_context: str,
+) -> tuple[str, int, int]:
+    eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR", "", assignment_context)
+    eval_response = await call_llm(eval_system, openai_messages, eval_temp, eval_tokens)
+
+    score = EvaluatorAgent.extract_score(eval_response)
+    points = score_to_points(score)
+
+    current_total = int(user.total_score) + points
+    user.total_score = str(current_total)
+    user.level = calculate_level(current_total)
+
+    module_id = _get_next_module(user.id, db)
+    progress = db.query(Progress).filter(
+        Progress.user_id == user.id,
+        Progress.module_id == module_id,
+    ).first()
+    if not progress:
+        progress = Progress(
+            user_id=user.id,
+            module_id=module_id,
+            module_name=MODULE_NAMES.get(module_id, ""),
+            score=points,
+            max_score=50,
+        )
+        db.add(progress)
+    else:
+        progress.score += points
+    progress.completed = progress.score >= progress.max_score * 0.7
+    progress.badge = get_module_badge(module_id, progress.score, progress.max_score)
+    db.commit()
+
+    add_message(db, conv_id, "assistant", eval_response, "EVALUATOR")
+
+    user_context = _build_user_context(user, db, eval_context=eval_response)
+    tutor_system, tutor_temp, tutor_tokens = _get_agent_config("TUTOR", user_context, assignment_context)
+
+    tutor_messages = openai_messages + [{"role": "assistant", "content": eval_response}]
+    tutor_response = await call_llm(tutor_system, tutor_messages, tutor_temp, tutor_tokens)
+
+    add_message(db, conv_id, "assistant", tutor_response, "TUTOR")
+
+    return tutor_response, score, points
+
+
 def _update_user(db: Session, user: User, agent_name: str, response: str):
     if agent_name == "PROFILER":
         profile_data = ProfilerAgent.parse_profile(response)
@@ -86,13 +230,6 @@ def _update_user(db: Session, user: User, agent_name: str, response: str):
             if profile_data.get("goals"):
                 user.goals = profile_data["goals"]
             db.commit()
-    elif agent_name == "EVALUATOR":
-        score = EvaluatorAgent.extract_score(response)
-        points = score_to_points(score)
-        current_total = int(user.total_score) + points
-        user.total_score = str(current_total)
-        user.level = calculate_level(current_total)
-        db.commit()
 
 
 @router.get("/conversations")
@@ -116,10 +253,8 @@ async def send_message(
     db_messages = get_conversation_messages(db, conv.id)
     openai_messages = messages_to_openai_format(db_messages)
 
-    is_submission_keyword = "EVALUATE_SUBMISSION" in chat_data.message
-    agent_name = _determine_agent(user.level, openai_messages, is_submission_keyword)
-
-    user_context = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
+    _force_profile_completion(db, user, openai_messages)
+    agent_name = _determine_agent(user.level, openai_messages, chat_data.message)
 
     assignment_context = ""
     current_assignment = db.query(Assignment).filter(
@@ -128,23 +263,33 @@ async def send_message(
     if current_assignment:
         assignment_context = f"Текущее задание: {current_assignment.title}\nКритерии: {current_assignment.criteria}"
 
-    system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
+    if agent_name == "EVALUATOR_THEN_TUTOR":
+        response, score, points = await _evaluate_then_tutor(
+            openai_messages, user, db, conv.id, assignment_context,
+        )
+        return {
+            "conversation_id": conv.id,
+            "agent": "EVALUATOR_THEN_TUTOR",
+            "response": response,
+            "score": score,
+            "points": points,
+            "total_score": int(user.total_score),
+        }
 
-    from app.agents.llm_client import call_llm
+    user_context = _build_user_context(user, db)
+    system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
     response = await call_llm(system_prompt, openai_messages, temperature, max_tokens)
 
     add_message(db, conv.id, "assistant", response, agent_name)
     _update_user(db, user, agent_name, response)
 
-    score = None
-    if agent_name == "EVALUATOR":
-        score = EvaluatorAgent.extract_score(response)
-
     return {
         "conversation_id": conv.id,
         "agent": agent_name,
         "response": response,
-        "score": score,
+        "score": None,
+        "points": 0,
+        "total_score": int(user.total_score),
     }
 
 
@@ -160,10 +305,8 @@ async def send_message_stream(
     db_messages = get_conversation_messages(db, conv.id)
     openai_messages = messages_to_openai_format(db_messages)
 
-    is_submission_keyword = "EVALUATE_SUBMISSION" in chat_data.message
-    agent_name = _determine_agent(user.level, openai_messages, is_submission_keyword)
-
-    user_context = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
+    _force_profile_completion(db, user, openai_messages)
+    agent_name = _determine_agent(user.level, openai_messages, chat_data.message)
 
     assignment_context = ""
     current_assignment = db.query(Assignment).filter(
@@ -172,21 +315,74 @@ async def send_message_stream(
     if current_assignment:
         assignment_context = f"Текущее задание: {current_assignment.title}\nКритерии: {current_assignment.criteria}"
 
+    conv_id = conv.id
+
+    if agent_name == "EVALUATOR_THEN_TUTOR":
+        async def generate_eval():
+            eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR", "", assignment_context)
+            eval_response = await call_llm(eval_system, openai_messages, eval_temp, eval_tokens)
+
+            score = EvaluatorAgent.extract_score(eval_response)
+            points = score_to_points(score)
+
+            current_total = int(user.total_score) + points
+            user.total_score = str(current_total)
+            user.level = calculate_level(current_total)
+
+            module_id = _get_next_module(user.id, db)
+            progress = db.query(Progress).filter(
+                Progress.user_id == user.id,
+                Progress.module_id == module_id,
+            ).first()
+            if not progress:
+                progress = Progress(
+                    user_id=user.id,
+                    module_id=module_id,
+                    module_name=MODULE_NAMES.get(module_id, ""),
+                    score=points,
+                    max_score=50,
+                )
+                db.add(progress)
+            else:
+                progress.score += points
+            progress.completed = progress.score >= progress.max_score * 0.7
+            progress.badge = get_module_badge(module_id, progress.score, progress.max_score)
+            db.commit()
+
+            add_message(db, conv_id, "assistant", eval_response, "EVALUATOR")
+
+            user_context = _build_user_context(user, db, eval_context=eval_response)
+            tutor_system, tutor_temp, tutor_tokens = _get_agent_config("TUTOR", user_context, assignment_context)
+
+            tutor_messages = openai_messages + [{"role": "assistant", "content": eval_response}]
+
+            yield f"data: {json.dumps({'agent': 'TUTOR', 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
+
+            full_response = []
+            async for token in stream_llm(tutor_system, tutor_messages, tutor_temp, tutor_tokens):
+                full_response.append(token)
+                yield f"data: {json.dumps({'token': token, 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
+
+            response_text = "".join(full_response)
+            add_message(db, conv_id, "assistant", response_text, "TUTOR")
+
+            yield f"data: {json.dumps({'done': True, 'score': score, 'points': points, 'total_score': int(user.total_score), 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(generate_eval(), media_type="text/event-stream")
+
+    user_context = _build_user_context(user, db)
     system_prompt, temperature, max_tokens = _get_agent_config(agent_name, user_context, assignment_context)
 
     async def generate():
         full_response = []
-        yield f"data: {json.dumps({'agent': agent_name}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'agent': agent_name, 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
         async for token in stream_llm(system_prompt, openai_messages, temperature, max_tokens):
             full_response.append(token)
             yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
         response_text = "".join(full_response)
-        add_message(db, conv.id, "assistant", response_text, agent_name)
+        add_message(db, conv_id, "assistant", response_text, agent_name)
         _update_user(db, user, agent_name, response_text)
-        score = None
-        if agent_name == "EVALUATOR":
-            score = EvaluatorAgent.extract_score(response_text)
-        yield f"data: {json.dumps({'done': True, 'score': score}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'score': None, 'points': 0, 'total_score': int(user.total_score), 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
