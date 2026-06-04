@@ -10,6 +10,10 @@ class ProfileOut(BaseModel):
     goals: str
     total_score: int
     badges: List[str] = []
+    created_at: str = ""
+    submissions_count: int = 0
+    modules_completed: int = 0
+    modules_total: int = 6
 
 
 class ProgressOut(BaseModel):

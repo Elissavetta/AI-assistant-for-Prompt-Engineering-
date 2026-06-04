@@ -19,6 +19,9 @@ class EvaluatorAgent:
         score_match = re.search(r"SCORE:\s*(-?\d+)", response)
         if score_match:
             return min(10, max(0, int(score_match.group(1))))
+        otsenka_match = re.search(r"ОЦЕНКА:\s*(-?\d+)", response)
+        if otsenka_match:
+            return min(10, max(0, int(otsenka_match.group(1))))
         rating_match = re.search(r"[⭐🌟]\s*\**Оценка\**:\s*\**?\s*(-?\d+)", response)
         if rating_match:
             return min(10, max(0, int(rating_match.group(1))))

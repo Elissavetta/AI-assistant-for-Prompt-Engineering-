@@ -16,6 +16,7 @@
             <div class="nav-links">
                 <a href="/dashboard" class="active">Обучение</a>
                 <a href="#" id="nav-assignments">Задания</a>
+                <a href="#" id="nav-stats">Статистика</a>
                 <div class="user-badge" id="user-badge">
                     <span>⭐</span>
                     <span id="user-score">0</span>
@@ -27,6 +28,9 @@
 
     <div class="dashboard-layout">
         <aside class="sidebar">
+            <div class="sidebar-section">
+                <div class="user-name" id="user-name">Пользователь</div>
+            </div>
             <div class="sidebar-section">
                 <div class="score-display">
                     <div class="score-number" id="sidebar-score">0</div>
@@ -73,6 +77,39 @@
         </main>
     </div>
 
-    <script src="/js/app.js"></script>
+    <div class="modal-overlay" id="stats-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Статистика</h2>
+                <button class="modal-close" id="stats-modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="stats-user-name" id="stats-username">Пользователь</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-days">—</div>
+                        <div class="stat-label">с пользователем</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-tasks">0</div>
+                        <div class="stat-label">заданий выполнено</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-modules">0/6</div>
+                        <div class="stat-label">модулей пройдено</div>
+                    </div>
+                </div>
+                <div class="stats-modules">
+                    <h3>Прогресс по модулям</h3>
+                    <div id="stats-progress-list"></div>
+                </div>
+                <div class="stats-total">
+                    Общий счёт: <span id="stats-total-score">0</span> очков
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/app.js?v=5"></script>
 </body>
 </html>

@@ -1,7 +1,6 @@
 from app.agents.profiler import ProfilerAgent
 from app.agents.tutor import TutorAgent
 from app.agents.evaluator import EvaluatorAgent
-from app.prompts.orchestrator_prompt import ORCHESTRATOR_SYSTEM_PROMPT
 
 
 class OrchestratorAgent:
@@ -13,7 +12,7 @@ class OrchestratorAgent:
         self.profiler = ProfilerAgent()
         self.tutor = TutorAgent()
         self.evaluator = EvaluatorAgent()
-        self.system_prompt = ORCHESTRATOR_SYSTEM_PROMPT
+        self.system_prompt = "Deprecated: routing is handled in chat.py"
 
     def determine_agent(self, user_level: str, conversation_history: list[dict], is_submission: bool) -> str:
         if not user_level or user_level == "newbie":

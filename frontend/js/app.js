@@ -35,6 +35,7 @@ function updateUI(profile, progress) {
 
     document.getElementById('user-score').textContent = profile.total_score;
     document.getElementById('sidebar-score').textContent = profile.total_score;
+    document.getElementById('user-name').textContent = profile.username;
 
     const levelBadge = document.getElementById('level-badge');
     const levels = {
@@ -182,46 +183,91 @@ async function sendMessage(text) {
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let agent = 'TUTOR';
+        let agent = '';
         let score = null;
+        let currentEl = streamingEl;
+        let currentTypewriter = typewriter;
+        let isFinalized = false;
+        let sseBuffer = '';
+
+        function finalizeCurrent() {
+            if (isFinalized) return;
+            currentTypewriter.stop();
+            finalizeStreamingMessage(currentEl, currentTypewriter.getFullText(), agent);
+            isFinalized = true;
+        }
+
+        function startNewBubble(newAgent) {
+            if (!isFinalized && currentTypewriter.getFullText() === '') {
+                agent = newAgent;
+                updateStreamingAgent(currentEl, agent);
+                return;
+            }
+            currentEl = addStreamingMessage();
+            currentTypewriter = createTypewriter(currentEl);
+            agent = newAgent;
+            updateStreamingAgent(currentEl, agent);
+            isFinalized = false;
+        }
+
+        function handleSseData(data) {
+            if (data.agent) {
+                console.log('[SSE] agent:', data.agent, 'isFinalized:', isFinalized, 'currentAgent:', agent);
+                if (isFinalized || agent === '') {
+                    startNewBubble(data.agent);
+                } else if (data.agent !== agent) {
+                    finalizeCurrent();
+                    startNewBubble(data.agent);
+                } else {
+                    updateStreamingAgent(currentEl, agent);
+                }
+            }
+
+            if (data.conversation_id) {
+                currentConversationId = data.conversation_id;
+            }
+
+            if (data.token) {
+                currentTypewriter.push(data.token);
+            }
+
+            if (data.done) {
+                console.log('[SSE] done:', data.agent_done || '(no agent_done)', 'isFinalized:', isFinalized);
+                score = data.score || null;
+                if (data.points && data.points > 0) {
+                    showScoreNotification(data.points, data.total_score);
+                }
+                if (data.agent_done) {
+                    finalizeCurrent();
+                }
+            }
+        }
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            sseBuffer += decoder.decode(value, { stream: true });
 
-            for (const line of lines) {
+            let lineEnd;
+            while ((lineEnd = sseBuffer.indexOf('\n')) !== -1) {
+                const line = sseBuffer.slice(0, lineEnd).trim();
+                sseBuffer = sseBuffer.slice(lineEnd + 1);
+
                 if (!line.startsWith('data: ')) continue;
                 try {
                     const data = JSON.parse(line.slice(6));
-
-                    if (data.agent) {
-                        agent = data.agent;
-                        updateStreamingAgent(streamingEl, agent);
-                    }
-
-                    if (data.conversation_id) {
-                        currentConversationId = data.conversation_id;
-                    }
-
-                    if (data.token) {
-                        typewriter.push(data.token);
-                    }
-
-                    if (data.done) {
-                        score = data.score || null;
-                        if (data.points && data.points > 0) {
-                            showScoreNotification(data.points, data.total_score);
-                        }
-                    }
-                } catch (e) {}
+                    handleSseData(data);
+                } catch (e) {
+                    console.warn('SSE parse error:', e, line);
+                }
             }
         }
 
-        typewriter.stop();
-        finalizeStreamingMessage(streamingEl, typewriter.getFullText(), agent);
+        if (!isFinalized) {
+            currentTypewriter.stop();
+            finalizeStreamingMessage(currentEl, currentTypewriter.getFullText(), agent);
+        }
         await refreshProfile();
     } catch (err) {
         typewriter.stop();
@@ -314,6 +360,11 @@ function updateStreamingText(el, text) {
 
 function finalizeStreamingMessage(el, text, agent) {
     updateStreamingAgent(el, agent);
+    const bubble = el.querySelector('.message-bubble');
+    if (bubble && text) {
+        bubble.innerHTML = renderMarkdown(text);
+    }
+    scrollToBottom();
 }
 
 function scrollToBottom() {
@@ -351,6 +402,8 @@ function renderMarkdown(text) {
 async function refreshProfile() {
     const profile = await fetchProfile();
     const progress = await fetchProgress();
+    window._lastProfile = profile;
+    window._lastProgress = progress;
     updateUI(profile, progress);
 }
 
@@ -365,6 +418,72 @@ function showScoreNotification(points, totalScore) {
 
     setTimeout(() => { notif.classList.add('score-notification-hide'); }, 2500);
     setTimeout(() => { notif.remove(); }, 3000);
+}
+
+function formatDuration(days) {
+    if (days === 0) return 'Сегодня';
+    if (days === 1) return '1 день';
+    if (days >= 2 && days <= 4) return `${days} дня`;
+    if (days <= 30) return `${days} дней`;
+    const months = Math.round(days / 30);
+    if (months === 1) return '~1 месяц';
+    if (months >= 2 && months <= 4) return `~${months} месяца`;
+    return `~${months} месяцев`;
+}
+
+function openStatsModal() {
+    const profile = window._lastProfile;
+    const progress = window._lastProgress;
+    if (!profile) return;
+
+    document.getElementById('stats-username').textContent = profile.username;
+    document.getElementById('stat-tasks').textContent = profile.submissions_count;
+    document.getElementById('stat-modules').textContent = `${profile.modules_completed}/${profile.modules_total}`;
+    document.getElementById('stats-total-score').textContent = profile.total_score;
+
+    if (profile.created_at) {
+        const days = Math.floor((Date.now() - new Date(profile.created_at)) / 86400000);
+        document.getElementById('stat-days').textContent = formatDuration(days);
+    } else {
+        document.getElementById('stat-days').textContent = '—';
+    }
+
+    const moduleMeta = [
+        { id: 1, name: 'Структура промпта', icon: '🏗️' },
+        { id: 2, name: 'Улучшение промптов', icon: '🔧' },
+        { id: 3, name: 'Few-shot', icon: '🎯' },
+        { id: 4, name: 'Chain-of-thought', icon: '🧠' },
+        { id: 5, name: 'Форматирование', icon: '🎨' },
+        { id: 6, name: 'Комплексный промпт', icon: '🏆' },
+    ];
+
+    const progressMap = {};
+    (progress || []).forEach(p => { progressMap[p.module_id] = p; });
+
+    const listEl = document.getElementById('stats-progress-list');
+    listEl.innerHTML = moduleMeta.map(m => {
+        const p = progressMap[m.id];
+        const score = p ? p.score : 0;
+        const maxScore = p ? p.max_score : 50;
+        const pct = maxScore > 0 ? Math.round(score / maxScore * 100) : 0;
+        const completed = p && p.completed;
+        return `
+            <div class="stats-module-row">
+                <span class="stats-module-icon">${completed ? '✅' : m.icon}</span>
+                <span class="stats-module-name">${m.name}</span>
+                <div class="stats-module-bar">
+                    <div class="stats-module-bar-fill" style="width: ${pct}%"></div>
+                </div>
+                <span class="stats-module-score">${score}</span>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('stats-modal').classList.add('modal-open');
+}
+
+function closeStatsModal() {
+    document.getElementById('stats-modal').classList.remove('modal-open');
 }
 
 async function init() {
@@ -412,6 +531,25 @@ async function init() {
         if (assignments && assignments.length > 0) {
             sendMessage(`Покажи мне список заданий по модулю ${assignments[0].module_id}`);
         }
+    });
+
+    document.getElementById('nav-stats').addEventListener('click', (e) => {
+        e.preventDefault();
+        openStatsModal();
+    });
+
+    document.getElementById('stats-modal-close').addEventListener('click', () => {
+        closeStatsModal();
+    });
+
+    document.getElementById('stats-modal').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('stats-modal')) {
+            closeStatsModal();
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeStatsModal();
     });
 
     chatInput.focus();

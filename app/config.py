@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     LLM_API_KEY: str = ""
-    LLM_MODEL: str = "Qwen3.5-35B-A3B"
+    LLM_MODEL: str = "DeepSeek-V4-Pro"
     LLM_BASE_URL: str = "https://api.ai.beeline.ru/api/v3"
     LLM_SSL_VERIFY: bool = True
     LLM_CERT_PATH: str = ""
