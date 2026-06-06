@@ -18,6 +18,7 @@ class User(Base):
     sphere = Column(String, default="")
     goals = Column(String, default="")
     total_score = Column(String, default="0")
+    mode = Column(String, default="lesson")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
 

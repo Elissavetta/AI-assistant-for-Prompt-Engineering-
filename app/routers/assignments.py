@@ -131,7 +131,7 @@ async def submit_answer(
     module_assignments = db.query(Assignment).filter(Assignment.module_id == assignment.module_id).all()
     max_possible = len(module_assignments) * 10
     progress.max_score = max_possible
-    progress.completed = progress.score >= max_possible * 0.7
+    progress.completed = progress.score >= 50
     progress.badge = get_module_badge(assignment.module_id, progress.score, max_possible)
 
     db.commit()

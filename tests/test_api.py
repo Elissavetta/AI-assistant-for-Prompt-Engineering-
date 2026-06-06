@@ -127,18 +127,19 @@ class TestScoring:
     def test_calculate_level_newbie(self):
         from app.services.scoring_service import calculate_level
         assert calculate_level(0) == "newbie"
-        assert calculate_level(15) == "newbie"
-        assert calculate_level(30) == "newbie"
+        assert calculate_level(50) == "newbie"
+        assert calculate_level(99) == "newbie"
 
     def test_calculate_level_intermediate(self):
         from app.services.scoring_service import calculate_level
-        assert calculate_level(31) == "intermediate"
-        assert calculate_level(50) == "intermediate"
+        assert calculate_level(100) == "intermediate"
+        assert calculate_level(200) == "intermediate"
+        assert calculate_level(299) == "intermediate"
 
     def test_calculate_level_advanced(self):
         from app.services.scoring_service import calculate_level
-        assert calculate_level(71) == "advanced"
-        assert calculate_level(100) == "advanced"
+        assert calculate_level(300) == "advanced"
+        assert calculate_level(500) == "advanced"
 
 
 class TestEvaluator:

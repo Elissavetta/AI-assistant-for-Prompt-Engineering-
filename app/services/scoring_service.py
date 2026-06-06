@@ -3,7 +3,7 @@ MODULE_NAMES = {
     2: "Улучшение плохого промпта",
     3: "Few-shot prompting",
     4: "Chain-of-thought",
-    5: "Форматирование и ограничения модели",
+    5: "Добавление контекста",
     6: "Комплексный промпт с нуля",
 }
 
@@ -12,28 +12,27 @@ MODULE_BADGES = {
     2: "🔧 Мастер улучшений",
     3: "🎯 Few-shot эксперт",
     4: "🧠 Мыслитель цепочек",
-    5: "🎨 Формат-дизайнер",
+    5: "📎 Мастер контекста",
     6: "🏆 Промпт-архитектор",
 }
 
 LEVEL_THRESHOLDS = {
-    "newbie": (0, 30),
-    "intermediate": (31, 70),
-    "advanced": (71, 100),
+    "newbie": (0, 99),
+    "intermediate": (100, 299),
+    "advanced": (300, 9999),
 }
 
 
 def calculate_level(total_score: int) -> str:
-    for level, (low, high) in LEVEL_THRESHOLDS.items():
-        if low <= total_score <= high:
-            return level
-    if total_score > 70:
+    if total_score >= 300:
         return "advanced"
+    if total_score >= 100:
+        return "intermediate"
     return "newbie"
 
 
 def get_module_badge(module_id: int, score: int, max_score: int) -> str:
-    if score >= max_score * 0.7:
+    if score >= 50:
         return MODULE_BADGES.get(module_id, "")
     return ""
 

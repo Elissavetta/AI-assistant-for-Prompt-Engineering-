@@ -28,6 +28,7 @@ security = HTTPBearer()
 
 AWAITING_ANSWER = "[ОЖИДАЕТСЯ ОТВЕТ]"
 AWAITING_CHOICE = "[ОЖИДАЕТСЯ ВЫБОР]"
+AWAITING_CLARIFICATION = "[ОЖИДАЕТСЯ УТОЧНЕНИЕ]"
 PROFILER_MAX_TURNS = 5
 
 
@@ -65,6 +66,8 @@ def _detect_awaiting_state(messages: list[dict]) -> str:
             break
     if not last_assistant:
         return ""
+    if AWAITING_CLARIFICATION in last_assistant:
+        return "CLARIFICATION"
     if AWAITING_ANSWER in last_assistant:
         return "ANSWER"
     if AWAITING_CHOICE in last_assistant:
@@ -85,11 +88,39 @@ def _is_user_wants_more(user_message: str) -> bool:
     return any(p in text for p in positive)
 
 
+PROMPT_UP_KEYWORDS = ["prompt up", "promptup", "промпт ап", "режим prompt", "режим prompt up", "свободный режим"]
+MODULE_KEYWORDS = ["хочу пройти модуль", "пройти модуль", "переключи на модуль", "вернуться к урокам", "вернись к урокам", "хочу вернуться к урокам", "научиться писать"]
+
+
+def _handle_mode_switch(user: User, db: Session, user_message: str):
+    text = user_message.strip().lower()
+    if any(kw in text for kw in MODULE_KEYWORDS):
+        user.mode = "lesson"
+        db.commit()
+    elif any(kw in text for kw in PROMPT_UP_KEYWORDS):
+        user.mode = "prompt_up"
+        db.commit()
+
+
+NAV_KEYWORDS = MODULE_KEYWORDS + PROMPT_UP_KEYWORDS
+
+
+def _is_navigation_message(user_message: str) -> bool:
+    text = user_message.strip().lower()
+    return any(kw in text for kw in NAV_KEYWORDS)
+
+
 def _determine_agent(user_level: str, openai_messages: list[dict], user_message: str = "") -> str:
     if not user_level:
         return "PROFILER"
 
+    if _is_navigation_message(user_message):
+        return "TUTOR"
+
     state = _detect_awaiting_state(openai_messages)
+
+    if state == "CLARIFICATION":
+        return "TUTOR"
 
     if state == "ANSWER" and _is_user_submission(user_message):
         return "EVALUATOR_THEN_TUTOR"
@@ -115,38 +146,42 @@ def _get_next_module(user_id: str, db: Session) -> int:
 
 
 def _build_user_context(user: User, db: Session, openai_messages: list[dict] = None, eval_context: str = "") -> str:
-    ctx = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
-    current_module = _get_next_module(user.id, db)
-    progress = db.query(Progress).filter(
-        Progress.user_id == user.id,
-        Progress.module_id == current_module,
-    ).first()
-    if progress:
-        ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Баллов: {progress.score}/{progress.max_score}"
-        if progress.completed:
-            ctx += " [ЗАВЕРШЁН]"
+    if user.mode == "prompt_up":
+        ctx = "Режим: prompt_up"
     else:
-        ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Новый модуль"
-
-    completed_ids = []
-    for mid in MODULE_ORDER:
-        p = db.query(Progress).filter(
+        ctx = f"Уровень: {user.level}, Сфера: {user.sphere}, Цели: {user.goals}"
+        current_module = _get_next_module(user.id, db)
+        progress = db.query(Progress).filter(
             Progress.user_id == user.id,
-            Progress.module_id == mid,
+            Progress.module_id == current_module,
         ).first()
-        if p and p.completed:
-            completed_ids.append(mid)
-    if completed_ids:
-        ctx += f", Завершённые модули: {completed_ids}"
+        if progress:
+            ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Баллов: {progress.score}/{progress.max_score}"
+            if progress.completed:
+                ctx += " [ЗАВЕРШЁН]"
+        else:
+            ctx += f", Текущий модуль: {current_module} ({MODULE_NAMES.get(current_module, '')}), Новый модуль"
 
-    if openai_messages:
-        last_assistant = ""
-        for msg in reversed(openai_messages):
-            if msg.get("role") == "assistant":
-                last_assistant = msg.get("content", "")
-                break
-        if "УРОВЕНЬ:" in last_assistant.upper():
-            ctx += "\n\nFIRST_TUTOR: да"
+        completed_ids = []
+        for mid in MODULE_ORDER:
+            p = db.query(Progress).filter(
+                Progress.user_id == user.id,
+                Progress.module_id == mid,
+            ).first()
+            if p and p.completed:
+                completed_ids.append(mid)
+        if completed_ids:
+            ctx += f", Завершённые модули: {completed_ids}"
+
+    if user.mode != "prompt_up":
+        if openai_messages:
+            last_assistant = ""
+            for msg in reversed(openai_messages):
+                if msg.get("role") == "assistant":
+                    last_assistant = msg.get("content", "")
+                    break
+            if "УРОВЕНЬ:" in last_assistant.upper():
+                ctx += "\n\nFIRST_TUTOR: да"
 
     if eval_context:
         ctx += f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_context}"
@@ -175,7 +210,7 @@ async def _evaluate_then_tutor(
     db: Session,
     conv_id: str,
 ) -> tuple[str, int, int]:
-    eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR")
+    eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR", "")
     eval_response = await call_llm(eval_system, openai_messages, eval_temp, eval_tokens)
 
     score = EvaluatorAgent.extract_score(eval_response)
@@ -201,7 +236,7 @@ async def _evaluate_then_tutor(
         db.add(progress)
     else:
         progress.score += points
-    progress.completed = progress.score >= progress.max_score * 0.7
+    progress.completed = progress.score >= 50
     progress.badge = get_module_badge(module_id, progress.score, progress.max_score)
     db.commit()
 
@@ -252,6 +287,7 @@ async def send_message(
     openai_messages = messages_to_openai_format(db_messages)
 
     _force_profile_completion(db, user, openai_messages)
+    _handle_mode_switch(user, db, chat_data.message)
     agent_name = _determine_agent(user.level, openai_messages, chat_data.message)
 
     if agent_name == "EVALUATOR_THEN_TUTOR":
@@ -317,13 +353,14 @@ async def send_message_stream(
     openai_messages = messages_to_openai_format(db_messages)
 
     _force_profile_completion(db, user, openai_messages)
+    _handle_mode_switch(user, db, chat_data.message)
     agent_name = _determine_agent(user.level, openai_messages, chat_data.message)
 
     conv_id = conv.id
 
     if agent_name == "EVALUATOR_THEN_TUTOR":
         async def generate_eval():
-            eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR")
+            eval_system, eval_temp, eval_tokens = _get_agent_config("EVALUATOR", "")
             eval_response = await call_llm(eval_system, openai_messages, eval_temp, eval_tokens)
 
             score = EvaluatorAgent.extract_score(eval_response)
@@ -349,7 +386,7 @@ async def send_message_stream(
                 db.add(progress)
             else:
                 progress.score += points
-            progress.completed = progress.score >= progress.max_score * 0.7
+            progress.completed = progress.score >= 50
             progress.badge = get_module_badge(module_id, progress.score, progress.max_score)
             db.commit()
 

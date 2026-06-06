@@ -47,21 +47,6 @@ function updateUI(profile, progress) {
     levelBadge.className = `level-badge ${lvl.cls}`;
     levelBadge.textContent = lvl.label;
 
-    const progressList = document.getElementById('progress-list');
-    if (progress && progress.length > 0) {
-        progressList.innerHTML = progress.map(p => `
-            <div class="progress-bar-container">
-                <div class="progress-label">
-                    <span>${p.module_name}</span>
-                    <span>${p.score}/${p.max_score}</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-bar-fill" style="width: ${p.max_score > 0 ? (p.score / p.max_score * 100) : 0}%"></div>
-                </div>
-            </div>
-        `).join('');
-    }
-
     const badgesList = document.getElementById('badges-list');
     if (profile.badges && profile.badges.length > 0) {
         badgesList.innerHTML = profile.badges.map(b => `
@@ -75,7 +60,7 @@ function updateUI(profile, progress) {
         { id: 2, name: 'Улучшение промптов', icon: '🔧', diff: 'newbie' },
         { id: 3, name: 'Few-shot', icon: '🎯', diff: 'intermediate' },
         { id: 4, name: 'Chain-of-thought', icon: '🧠', diff: 'intermediate' },
-        { id: 5, name: 'Форматирование', icon: '🎨', diff: 'advanced' },
+        { id: 5, name: 'Добавление контекста', icon: '📎', diff: 'intermediate' },
         { id: 6, name: 'Комплексный промпт', icon: '🏆', diff: 'advanced' },
     ];
     const completedModules = (progress || []).filter(p => p.completed).map(p => p.module_id);
@@ -89,6 +74,10 @@ function updateUI(profile, progress) {
 
 function selectModule(moduleId, moduleName) {
     sendMessage(`Хочу пройти модуль ${moduleId}: ${moduleName}`);
+}
+
+function selectPromptUp() {
+    sendMessage('Хочу перейти в режим Prompt Up');
 }
 
 let currentConversationId = null;
@@ -383,6 +372,7 @@ function renderMarkdown(text) {
 
     html = html.replace(/\[ОЖИДАЕТСЯ ОТВЕТ\]/g, '');
     html = html.replace(/\[ОЖИДАЕТСЯ ВЫБОР\]/g, '');
+    html = html.replace(/\[ОЖИДАЕТСЯ УТОЧНЕНИЕ\]/g, '');
 
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -453,7 +443,7 @@ function openStatsModal() {
         { id: 2, name: 'Улучшение промптов', icon: '🔧' },
         { id: 3, name: 'Few-shot', icon: '🎯' },
         { id: 4, name: 'Chain-of-thought', icon: '🧠' },
-        { id: 5, name: 'Форматирование', icon: '🎨' },
+        { id: 5, name: 'Добавление контекста', icon: '📎' },
         { id: 6, name: 'Комплексный промпт', icon: '🏆' },
     ];
 
@@ -468,13 +458,14 @@ function openStatsModal() {
         const pct = maxScore > 0 ? Math.round(score / maxScore * 100) : 0;
         const completed = p && p.completed;
         return `
-            <div class="stats-module-row">
-                <span class="stats-module-icon">${completed ? '✅' : m.icon}</span>
-                <span class="stats-module-name">${m.name}</span>
-                <div class="stats-module-bar">
-                    <div class="stats-module-bar-fill" style="width: ${pct}%"></div>
+            <div class="progress-bar-container">
+                <div class="progress-label">
+                    <span>${completed ? '✅' : m.icon} ${m.name}</span>
+                    <span>${score}/${maxScore}</span>
                 </div>
-                <span class="stats-module-score">${score}</span>
+                <div class="progress-bar">
+                    <div class="progress-bar-fill" style="width: ${pct}%"></div>
+                </div>
             </div>
         `;
     }).join('');
@@ -525,12 +516,14 @@ async function init() {
         window.location.href = '/login';
     });
 
-    document.getElementById('nav-assignments').addEventListener('click', async (e) => {
+    document.getElementById('nav-lessons').addEventListener('click', (e) => {
         e.preventDefault();
-        const assignments = await fetchAssignments();
-        if (assignments && assignments.length > 0) {
-            sendMessage(`Покажи мне список заданий по модулю ${assignments[0].module_id}`);
-        }
+        sendMessage('Хочу вернуться к урокам');
+    });
+
+    document.getElementById('nav-prompt-up').addEventListener('click', (e) => {
+        e.preventDefault();
+        sendMessage('Хочу перейти в режим Prompt Up');
     });
 
     document.getElementById('nav-stats').addEventListener('click', (e) => {
