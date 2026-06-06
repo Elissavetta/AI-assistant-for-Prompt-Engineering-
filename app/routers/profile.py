@@ -1,78 +1,64 @@
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.models.assignment import Submission
-from app.schemas.chat import ChatMessage
 from app.schemas.progress import ProfileOut, ProgressOut
-from app.services.auth_service import decode_access_token
-from app.services.scoring_service import calculate_level, MODULE_NAMES
-from app.memory.conversation_memory import (
-    create_conversation,
-    get_conversation,
-    get_user_conversations,
-    add_message,
-    get_conversation_messages,
-    messages_to_openai_format,
-)
-from app.agents.orchestrator import OrchestratorAgent
+from app.services.auth_service import get_current_user
+from app.services.progress_service import get_or_create_profile, get_module_progress_map
+from app.services.scoring_service import MODULE_NAMES, MODULE_ORDER, get_module_badge
 
 router = APIRouter(prefix="/profile", tags=["profile"])
-security = HTTPBearer()
-
-orchestrator = OrchestratorAgent()
-
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
-    payload = decode_access_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user_id = payload.get("sub")
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
 
 
 @router.get("/me", response_model=ProfileOut)
 def get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    badges = []
-    modules_completed = 0
-    for pr in user.progress_records:
-        if pr.badge:
-            badges.append(pr.badge)
-        if pr.completed:
-            modules_completed += 1
+    profile = get_or_create_profile(db, user)
+    modules = get_module_progress_map(db, user.id)
 
-    submissions_count = db.query(Submission).filter(Submission.user_id == user.id).count()
+    badges = []
+    for mid in MODULE_ORDER:
+        mp = modules.get(mid)
+        if mp and mp.score >= 50:
+            badge = get_module_badge(mid, mp.score)
+            if badge:
+                badges.append(badge)
 
     return ProfileOut(
         username=user.username,
         email=user.email,
-        level=user.level,
-        sphere=user.sphere,
-        goals=user.goals,
-        total_score=int(user.total_score),
+        level=profile.level,
+        sphere=profile.sphere,
+        goals=profile.goals,
+        total_score=profile.total_score,
         badges=badges,
-        created_at=user.created_at.isoformat() if user.created_at else "",
-        submissions_count=submissions_count,
-        modules_completed=modules_completed,
-        modules_total=6,
+        created_at=profile.created_at.isoformat() if profile.created_at else "",
+        tasks_count=sum(mp.count for mp in modules.values()),
+        modules_completed=sum(1 for mp in modules.values() if mp.is_completed),
+        modules_total=len(MODULE_ORDER),
     )
 
 
 @router.get("/progress", response_model=list[ProgressOut])
-def get_progress(user: User = Depends(get_current_user)):
+def get_progress(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile = get_or_create_profile(db, user)
+    modules = get_module_progress_map(db, user.id)
     result = []
-    for pr in user.progress_records:
+    for mid in MODULE_ORDER:
+        mp = modules.get(mid)
+        score = mp.score if mp else 0
+        count = mp.count if mp else 0
+        avg = mp.avg if mp else 0.0
+        completed = mp.is_completed if mp else False
+        badge = get_module_badge(mid, score)
         result.append(ProgressOut(
-            module_id=pr.module_id,
-            module_name=pr.module_name,
-            score=pr.score,
-            max_score=pr.max_score,
-            completed=pr.completed,
-            badge=pr.badge,
+            module_id=mid,
+            module_name=MODULE_NAMES.get(mid, ""),
+            score=score,
+            max_score=50,
+            avg_score=round(avg, 1),
+            count=count,
+            completed=completed,
+            badge=badge,
         ))
     return result

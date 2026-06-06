@@ -1,5 +1,16 @@
 const API = '/api';
 
+const MODULE_META = [
+    { id: 1, name: 'Структура промпта', icon: '🏗️' },
+    { id: 2, name: 'Улучшение промптов', icon: '🔧' },
+    { id: 3, name: 'Few-shot', icon: '🎯' },
+    { id: 4, name: 'Chain-of-thought', icon: '🧠' },
+    { id: 5, name: 'Добавление контекста', icon: '📎' },
+    { id: 6, name: 'Комплексный промпт', icon: '🏆' },
+];
+
+let currentMode = 'lesson';
+
 function getToken() {
     return localStorage.getItem('token');
 }
@@ -11,23 +22,35 @@ function headers() {
     };
 }
 
-async function fetchProfile() {
-    const res = await fetch(`${API}/profile/me`, { headers: headers() });
+function handleAuthError(res) {
     if (res.status === 401) {
+        localStorage.removeItem('token');
         window.location.href = '/login';
+        return true;
+    }
+    return false;
+}
+
+async function fetchProfile() {
+    try {
+        const res = await fetch(`${API}/profile/me`, { headers: headers() });
+        if (handleAuthError(res)) return null;
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
         return null;
     }
-    return await res.json();
 }
 
 async function fetchProgress() {
-    const res = await fetch(`${API}/profile/progress`, { headers: headers() });
-    return await res.json();
-}
-
-async function fetchAssignments() {
-    const res = await fetch(`${API}/assignments/`, { headers: headers() });
-    return await res.json();
+    try {
+        const res = await fetch(`${API}/profile/progress`, { headers: headers() });
+        if (handleAuthError(res)) return [];
+        if (!res.ok) return [];
+        return await res.json();
+    } catch {
+        return [];
+    }
 }
 
 function updateUI(profile, progress) {
@@ -55,16 +78,8 @@ function updateUI(profile, progress) {
     }
 
     const modulesList = document.getElementById('modules-list');
-    const moduleNames = [
-        { id: 1, name: 'Структура промпта', icon: '🏗️', diff: 'newbie' },
-        { id: 2, name: 'Улучшение промптов', icon: '🔧', diff: 'newbie' },
-        { id: 3, name: 'Few-shot', icon: '🎯', diff: 'intermediate' },
-        { id: 4, name: 'Chain-of-thought', icon: '🧠', diff: 'intermediate' },
-        { id: 5, name: 'Добавление контекста', icon: '📎', diff: 'intermediate' },
-        { id: 6, name: 'Комплексный промпт', icon: '🏆', diff: 'advanced' },
-    ];
     const completedModules = (progress || []).filter(p => p.completed).map(p => p.module_id);
-    modulesList.innerHTML = moduleNames.map(m => `
+    modulesList.innerHTML = MODULE_META.map(m => `
         <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}" onclick="selectModule(${m.id}, '${m.name}')">
             <div class="module-icon">${completedModules.includes(m.id) ? '✅' : m.icon}</div>
             <span>${m.name}</span>
@@ -80,7 +95,6 @@ function selectPromptUp() {
     sendMessage('Хочу перейти в режим Prompt Up');
 }
 
-let currentConversationId = null;
 let isLoading = false;
 
 function createTypewriter(el) {
@@ -165,10 +179,12 @@ async function sendMessage(text) {
             method: 'POST',
             headers: headers(),
             body: JSON.stringify({
-                conversation_id: currentConversationId,
                 message: text,
+                mode: currentMode,
             }),
         });
+
+        if (handleAuthError(res)) return;
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -201,7 +217,6 @@ async function sendMessage(text) {
 
         function handleSseData(data) {
             if (data.agent) {
-                console.log('[SSE] agent:', data.agent, 'isFinalized:', isFinalized, 'currentAgent:', agent);
                 if (isFinalized || agent === '') {
                     startNewBubble(data.agent);
                 } else if (data.agent !== agent) {
@@ -212,16 +227,11 @@ async function sendMessage(text) {
                 }
             }
 
-            if (data.conversation_id) {
-                currentConversationId = data.conversation_id;
-            }
-
             if (data.token) {
                 currentTypewriter.push(data.token);
             }
 
             if (data.done) {
-                console.log('[SSE] done:', data.agent_done || '(no agent_done)', 'isFinalized:', isFinalized);
                 score = data.score || null;
                 if (data.points && data.points > 0) {
                     showScoreNotification(data.points, data.total_score);
@@ -339,14 +349,6 @@ function updateStreamingAgent(el, agent) {
     label.textContent = cfg.label;
 }
 
-function updateStreamingText(el, text) {
-    const bubble = el.querySelector('.message-bubble');
-    const typing = el.querySelector('.typing-indicator');
-    if (typing) typing.remove();
-    bubble.innerHTML = renderMarkdown(text);
-    scrollToBottom();
-}
-
 function finalizeStreamingMessage(el, text, agent) {
     updateStreamingAgent(el, agent);
     const bubble = el.querySelector('.message-bubble');
@@ -390,11 +392,16 @@ function renderMarkdown(text) {
 }
 
 async function refreshProfile() {
-    const profile = await fetchProfile();
-    const progress = await fetchProgress();
-    window._lastProfile = profile;
-    window._lastProgress = progress;
-    updateUI(profile, progress);
+    try {
+        const profile = await fetchProfile();
+        if (!profile) return;
+        const progress = await fetchProgress();
+        window._lastProfile = profile;
+        window._lastProgress = progress;
+        updateUI(profile, progress);
+    } catch {
+        // non-critical — UI already rendered
+    }
 }
 
 function showScoreNotification(points, totalScore) {
@@ -427,7 +434,7 @@ function openStatsModal() {
     if (!profile) return;
 
     document.getElementById('stats-username').textContent = profile.username;
-    document.getElementById('stat-tasks').textContent = profile.submissions_count;
+    document.getElementById('stat-tasks').textContent = profile.tasks_count;
     document.getElementById('stat-modules').textContent = `${profile.modules_completed}/${profile.modules_total}`;
     document.getElementById('stats-total-score').textContent = profile.total_score;
 
@@ -438,20 +445,11 @@ function openStatsModal() {
         document.getElementById('stat-days').textContent = '—';
     }
 
-    const moduleMeta = [
-        { id: 1, name: 'Структура промпта', icon: '🏗️' },
-        { id: 2, name: 'Улучшение промптов', icon: '🔧' },
-        { id: 3, name: 'Few-shot', icon: '🎯' },
-        { id: 4, name: 'Chain-of-thought', icon: '🧠' },
-        { id: 5, name: 'Добавление контекста', icon: '📎' },
-        { id: 6, name: 'Комплексный промпт', icon: '🏆' },
-    ];
-
     const progressMap = {};
     (progress || []).forEach(p => { progressMap[p.module_id] = p; });
 
     const listEl = document.getElementById('stats-progress-list');
-    listEl.innerHTML = moduleMeta.map(m => {
+    listEl.innerHTML = MODULE_META.map(m => {
         const p = progressMap[m.id];
         const score = p ? p.score : 0;
         const maxScore = p ? p.max_score : 50;
@@ -483,8 +481,6 @@ async function init() {
         window.location.href = '/login';
         return;
     }
-
-    await refreshProfile();
 
     const chatInput = document.getElementById('chat-input');
     const sendBtn = document.getElementById('send-btn');
@@ -546,6 +542,8 @@ async function init() {
     });
 
     chatInput.focus();
+
+    await refreshProfile();
 }
 
 document.addEventListener('DOMContentLoaded', init);

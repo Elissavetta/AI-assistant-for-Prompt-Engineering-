@@ -1,11 +1,16 @@
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import get_db
 from app.models.user import User
+
+security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
@@ -57,4 +62,18 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
         return None
     if not verify_password(password, user.hashed_password):
         return None
+    return user
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    payload = decode_access_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
     return user

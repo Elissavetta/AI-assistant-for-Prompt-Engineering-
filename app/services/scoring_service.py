@@ -16,11 +16,7 @@ MODULE_BADGES = {
     6: "🏆 Промпт-архитектор",
 }
 
-LEVEL_THRESHOLDS = {
-    "newbie": (0, 99),
-    "intermediate": (100, 299),
-    "advanced": (300, 9999),
-}
+MODULE_ORDER = [1, 2, 3, 4, 5, 6]
 
 
 def calculate_level(total_score: int) -> str:
@@ -31,11 +27,7 @@ def calculate_level(total_score: int) -> str:
     return "newbie"
 
 
-def get_module_badge(module_id: int, score: int, max_score: int) -> str:
+def get_module_badge(module_id: int, score: int) -> str:
     if score >= 50:
         return MODULE_BADGES.get(module_id, "")
     return ""
-
-
-def score_to_points(score: int) -> int:
-    return score

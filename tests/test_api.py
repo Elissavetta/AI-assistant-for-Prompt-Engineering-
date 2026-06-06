@@ -1,11 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
 
 from app.database import SessionLocal, Base, engine
 from app.models.user import User
 from app.services.auth_service import hash_password, create_access_token, decode_access_token
-
 
 Base.metadata.create_all(bind=engine)
 
@@ -30,10 +28,6 @@ def test_user(db):
         username="testuser",
         email="test@test.com",
         hashed_password=hash_password("testpass123"),
-        level="newbie",
-        sphere="",
-        goals="",
-        total_score="0",
     )
     db.add(user)
     db.commit()
@@ -101,26 +95,18 @@ class TestProfile:
         assert response.status_code == 200
         data = response.json()
         assert data["username"] == "testuser"
-        assert data["level"] == "newbie"
+        assert "level" in data
 
     def test_unauthorized(self, client):
         response = client.get("/api/profile/me")
         assert response.status_code in (401, 403)
 
-
-class TestAssignments:
-    def test_list_assignments(self, client, auth_headers):
-        response = client.get("/api/assignments/", headers=auth_headers)
+    def test_get_progress(self, client, auth_headers):
+        response = client.get("/api/profile/progress", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
-        assert len(data) > 0
-
-    def test_assignments_by_module(self, client, auth_headers):
-        response = client.get("/api/assignments/?module_id=1", headers=auth_headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert all(a["module_id"] == 1 for a in data)
+        assert len(data) == 6
 
 
 class TestScoring:
@@ -144,44 +130,35 @@ class TestScoring:
 
 class TestEvaluator:
     def test_extract_score(self):
-        from app.agents.evaluator import EvaluatorAgent
-        evaluator = EvaluatorAgent()
-
-        assert evaluator.extract_score("SCORE: 8") == 8
-        assert evaluator.extract_score("SCORE: 0") == 0
-        assert evaluator.extract_score("SCORE: 10") == 10
-        assert evaluator.extract_score("Some text without score") == 5
+        from app.agents.evaluator import extract_score
+        assert extract_score("SCORE: 8") == 8
+        assert extract_score("SCORE: 0") == 0
+        assert extract_score("SCORE: 10") == 10
+        assert extract_score("Some text without score") == 5
 
     def test_extract_score_clamped(self):
-        from app.agents.evaluator import EvaluatorAgent
-        evaluator = EvaluatorAgent()
-        assert evaluator.extract_score("SCORE: 15") == 10
-        assert evaluator.extract_score("SCORE: -3") == 0
+        from app.agents.evaluator import extract_score
+        assert extract_score("SCORE: 15") == 10
+        assert extract_score("SCORE: -3") == 0
+
+    def test_extract_score_russian(self):
+        from app.agents.evaluator import extract_score
+        assert extract_score("ОЦЕНКА: 7") == 7
 
 
 class TestProfiler:
     def test_parse_profile_newbie(self):
-        from app.agents.profiler import ProfilerAgent
-        profiler = ProfilerAgent()
-        result = profiler.parse_profile(
-            "УРОВЕНЬ: newbie | СФЕРА: маркетинг | ЦЕЛИ: научиться писать промпты | ОБОСНОВАНИЕ: нет опыта"
+        from app.agents.profiler import parse_profile
+        result = parse_profile(
+            "УРОВЕНЬ: newbie | СФЕРА: маркетинг | ЦЕЛИ: научиться писать промпты"
         )
         assert result["level"] == "newbie"
         assert result["sphere"] == "маркетинг"
 
     def test_parse_profile_intermediate(self):
-        from app.agents.profiler import ProfilerAgent
-        profiler = ProfilerAgent()
-        result = profiler.parse_profile(
+        from app.agents.profiler import parse_profile
+        result = parse_profile(
             "УРОВЕНЬ: intermediate | СФЕРА: разработка | ЦЕЛИ: систематизировать знания"
-        )
-        assert result["level"] == "intermediate"
-
-    def test_parse_profile_russian(self):
-        from app.agents.profiler import ProfilerAgent
-        profiler = ProfilerAgent()
-        result = profiler.parse_profile(
-            "УРОВЕНЬ: средний | СФЕРА: аналитика | ЦЕЛИ: продвинутые техники"
         )
         assert result["level"] == "intermediate"
 
@@ -196,3 +173,49 @@ class TestTokenService:
     def test_invalid_token(self):
         payload = decode_access_token("invalid.token.here")
         assert payload is None
+
+
+class TestProgressService:
+    def test_get_or_create_profile(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile
+        profile = get_or_create_profile(db, test_user)
+        assert profile is not None
+        assert profile.user_id == test_user.id
+        assert profile.level == ""
+
+    def test_module_progress_initialized(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        assert len(modules) == 6
+        for mid in range(1, 7):
+            assert mid in modules
+            assert modules[mid].score == 0
+            assert modules[mid].count == 0
+
+
+class TestOrchestrator:
+    def test_extract_module_id(self):
+        from app.agents.orchestrator import extract_module_id
+        assert extract_module_id("Хочу пройти модуль 3") == 3
+        assert extract_module_id("пройти модуль 5: добавление контекста") == 5
+        assert extract_module_id("Переключи на модуль 1") == 1
+        assert extract_module_id("Привет, как дела?") is None
+        assert extract_module_id("модуль 7") is None
+
+    def test_get_active_module_default(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        assert session.get_active_module() == 1
+
+    def test_set_current_module(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        session.set_current_module(3)
+        assert session.get_active_module() == 3

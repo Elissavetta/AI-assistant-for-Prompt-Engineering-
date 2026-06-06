@@ -1,35 +1,45 @@
-from app.agents.llm_client import call_llm
-from app.prompts.profiler_prompt import PROFILER_SYSTEM_PROMPT
+import re
+
+PROFILER_MAX_TURNS = 5
 
 
-class ProfilerAgent:
-    def __init__(self):
-        self.system_prompt = PROFILER_SYSTEM_PROMPT
+def parse_profile(response: str) -> dict:
+    result = {"level": "", "sphere": "", "goals": ""}
+    level_match = re.search(r'УРОВЕНЬ:\s*(\w+)', response, re.IGNORECASE)
+    if level_match:
+        val = level_match.group(1).lower()
+        if val in ("newbie", "intermediate", "advanced"):
+            result["level"] = val
+    sphere_match = re.search(r'СФЕРА:\s*([^\n|]+)', response, re.IGNORECASE)
+    if sphere_match:
+        result["sphere"] = sphere_match.group(1).strip()
+    goals_match = re.search(r'ЦЕЛИ?:\s*([^\n|]+)', response, re.IGNORECASE)
+    if goals_match:
+        result["goals"] = goals_match.group(1).strip()
+    return result
 
-    async def chat(self, messages: list[dict]) -> str:
-        return await call_llm(self.system_prompt, messages, temperature=0.5)
 
-    @staticmethod
-    def parse_profile(response: str) -> dict:
-        level = "newbie"
-        sphere = ""
-        goals = ""
+def force_profile_completion(session) -> bool:
+    if session.profile.level:
+        return False
+    assistant_turns = sum(1 for m in session.conversation if m.get("role") == "assistant")
+    if assistant_turns >= PROFILER_MAX_TURNS:
+        session.profile.level = "newbie"
+        if not session.profile.sphere:
+            session.profile.sphere = "общее"
+        if not session.profile.goals:
+            session.profile.goals = "научиться писать промпты"
+        return True
+    return False
 
-        if "УРОВЕНЬ:" in response.upper() or "УРОВЕНЬ:" in response:
-            parts = response.split("|")
-            for part in parts:
-                part_stripped = part.strip()
-                if "УРОВЕНЬ:" in part_stripped.upper():
-                    level_raw = part_stripped.split(":")[-1].strip().lower()
-                    if "intermediate" in level_raw or "средний" in level_raw:
-                        level = "intermediate"
-                    elif "advanced" in level_raw or "продвинутый" in level_raw:
-                        level = "advanced"
-                    else:
-                        level = "newbie"
-                elif "СФЕРА:" in part_stripped.upper():
-                    sphere = part_stripped.split(":")[-1].strip()
-                elif "ЦЕЛИ:" in part_stripped.upper():
-                    goals = part_stripped.split(":")[-1].strip()
 
-        return {"level": level, "sphere": sphere, "goals": goals}
+def update_user_from_profile(session, response: str):
+    if "УРОВЕНЬ:" in response.upper():
+        profile_data = parse_profile(response)
+        if profile_data.get("level"):
+            session.profile.level = profile_data["level"]
+            session.profile.profiler_done = True
+        if profile_data.get("sphere"):
+            session.profile.sphere = profile_data["sphere"]
+        if profile_data.get("goals"):
+            session.profile.goals = profile_data["goals"]

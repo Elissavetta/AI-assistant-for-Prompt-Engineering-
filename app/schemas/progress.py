@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional, List
 
 
 class ProfileOut(BaseModel):
@@ -9,9 +8,9 @@ class ProfileOut(BaseModel):
     sphere: str
     goals: str
     total_score: int
-    badges: List[str] = []
+    badges: list[str] = []
     created_at: str = ""
-    submissions_count: int = 0
+    tasks_count: int = 0
     modules_completed: int = 0
     modules_total: int = 6
 
@@ -21,29 +20,7 @@ class ProgressOut(BaseModel):
     module_name: str
     score: int
     max_score: int
+    avg_score: float
+    count: int
     completed: bool
     badge: str
-
-
-class SubmitAnswer(BaseModel):
-    assignment_id: str
-    answer: str
-
-
-class SubmissionOut(BaseModel):
-    id: str
-    assignment_id: str
-    answer: str
-    feedback: str
-    score: int
-
-
-class AssignmentOut(BaseModel):
-    id: str
-    module_id: int
-    title: str
-    description: str
-    task_text: str
-    difficulty: str
-    hint: str
-    order_num: int

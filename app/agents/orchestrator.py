@@ -1,65 +1,58 @@
-from app.agents.profiler import ProfilerAgent
-from app.agents.tutor import TutorAgent
-from app.agents.evaluator import EvaluatorAgent
+import re
+
+from app.services.session_cache import AWAITING_ANSWER, AWAITING_CHOICE, AWAITING_CLARIFICATION
+
+PROMPT_UP_KEYWORDS = ["prompt up", "promptup", "промпт ап", "режим prompt", "режим prompt up", "свободный режим"]
+MODULE_KEYWORDS = ["хочу пройти модуль", "пройти модуль", "переключи на модуль", "вернуться к урокам", "вернись к урокам", "хочу вернуться к урокам", "научиться писать"]
+NAV_KEYWORDS = MODULE_KEYWORDS + PROMPT_UP_KEYWORDS
+
+POSITIVE_WORDS = ["да", "хочу", "давай", "ещё", "еще", "конечно", "yes", "next", "дальше"]
 
 
-class OrchestratorAgent:
-    PROFILER = "PROFILER"
-    TUTOR = "TUTOR"
-    EVALUATOR = "EVALUATOR"
+def is_user_submission(user_message: str) -> bool:
+    return len(user_message.strip()) > 30
 
-    def __init__(self):
-        self.profiler = ProfilerAgent()
-        self.tutor = TutorAgent()
-        self.evaluator = EvaluatorAgent()
-        self.system_prompt = "Deprecated: routing is handled in chat.py"
 
-    def determine_agent(self, user_level: str, conversation_history: list[dict], is_submission: bool) -> str:
-        if not user_level or user_level == "newbie":
-            has_profiling_result = any(
-                "УРОВЕНЬ:" in msg.get("content", "").upper()
-                for msg in conversation_history
-                if msg.get("role") == "assistant"
-            )
-            if not has_profiling_result:
-                return self.PROFILER
+def is_user_wants_more(user_message: str) -> bool:
+    text = user_message.strip().lower()
+    return any(p in text for p in POSITIVE_WORDS)
 
-        if is_submission:
-            return self.EVALUATOR
 
-        return self.TUTOR
+def is_navigation_message(user_message: str) -> bool:
+    text = user_message.strip().lower()
+    return any(kw in text for kw in NAV_KEYWORDS)
 
-    async def route(
-        self,
-        messages: list[dict],
-        user_level: str = "",
-        user_context: str = "",
-        assignment_context: str = "",
-        is_submission: bool = False,
-    ) -> dict:
-        agent_name = self.determine_agent(user_level, messages, is_submission)
 
-        if agent_name == self.PROFILER:
-            response = await self.profiler.chat(messages)
-            profile_data = self.profiler.parse_profile(response)
-            return {
-                "agent": self.PROFILER,
-                "response": response,
-                "profile_data": profile_data,
-            }
+def extract_module_id(user_message: str) -> int | None:
+    match = re.search(r'модул[ьея]\s+(\d+)', user_message.lower())
+    if match:
+        mid = int(match.group(1))
+        if 1 <= mid <= 6:
+            return mid
+    return None
 
-        elif agent_name == self.EVALUATOR:
-            response = await self.evaluator.evaluate(messages, assignment_context)
-            score = self.evaluator.extract_score(response)
-            return {
-                "agent": self.EVALUATOR,
-                "response": response,
-                "score": score,
-            }
 
-        else:
-            response = await self.tutor.chat(messages, user_context)
-            return {
-                "agent": self.TUTOR,
-                "response": response,
-            }
+def determine_agent(session) -> str:
+    if not session.has_profiler_level():
+        return "PROFILER"
+
+    user_message = session.conversation[-1].get("content", "") if session.conversation else ""
+
+    if is_navigation_message(user_message):
+        mid = extract_module_id(user_message)
+        if mid:
+            session.set_current_module(mid)
+        return "TUTOR"
+
+    state = session.get_awaiting_state()
+
+    if state == "CLARIFICATION":
+        return "TUTOR"
+
+    if state == "ANSWER" and is_user_submission(user_message):
+        return "EVALUATOR_THEN_TUTOR"
+
+    if state == "CHOICE" and is_user_wants_more(user_message):
+        return "TUTOR"
+
+    return "TUTOR"

@@ -5,7 +5,7 @@ services:
       - "8000:8000"
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-Qwen3.5-35B-A3B}
+      - LLM_MODEL=${LLM_MODEL:-DeepSeek-V4-Pro}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://api.ai.beeline.ru/api/v3}
       - LLM_SSL_VERIFY=${LLM_SSL_VERIFY:-false}
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
