@@ -35,6 +35,9 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
             if not profile.tutor_introduced:
                 ctx += "\n\nFIRST_TUTOR: да"
 
+        if session.is_returning_user():
+            ctx += "\n\nRETURNING_USER: да"
+
     if eval_context:
         ctx += f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_context}"
 

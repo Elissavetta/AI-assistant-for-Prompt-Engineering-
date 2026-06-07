@@ -93,6 +93,27 @@ function updateUI(profile, progress) {
             if (meta) selectModule(mid, meta.name);
         });
     });
+
+    const isReturning = profile.level && profile.level !== '';
+    const welcomeTitle = document.getElementById('welcome-title');
+    const welcomeSubtitle = document.getElementById('welcome-subtitle');
+    const startBtn = document.getElementById('start-btn');
+
+    if (isReturning) {
+        welcomeTitle.textContent = 'С возвращением!';
+        const currentModule = (progress || []).find(p => !p.completed);
+        if (currentModule) {
+            const meta = MODULE_META.find(m => m.id === currentModule.module_id);
+            welcomeSubtitle.textContent = 'Ты на модуле ' + (meta ? meta.name : currentModule.module_id) + ' — продолжим?';
+        } else {
+            welcomeSubtitle.textContent = 'Все модули пройдены! Можно повторить или попробовать режим Prompt Up.';
+        }
+        startBtn.textContent = 'Продолжить обучение';
+    } else {
+        welcomeTitle.textContent = 'Привет! Я Prompt Up — твой наставник по работе с ИИ';
+        welcomeSubtitle.textContent = 'Помогу освоить промпт-инжиниринг — от основ до продвинутых техник. Напиши что-нибудь, и мы начнём!';
+        startBtn.textContent = 'Начать обучение';
+    }
 }
 
 function selectModule(moduleId, moduleName) {
@@ -516,7 +537,8 @@ async function init() {
     });
 
     document.getElementById('start-btn').addEventListener('click', () => {
-        sendMessage('Привет! Я хочу научиться писать хорошие промпты для AI.');
+        const isReturning = window._lastProfile && window._lastProfile.level && window._lastProfile.level !== '';
+        sendMessage(isReturning ? 'Хочу продолжить обучение' : 'Привет! Я хочу научиться писать хорошие промпты для AI.');
     });
 
     document.getElementById('logout-btn').addEventListener('click', (e) => {

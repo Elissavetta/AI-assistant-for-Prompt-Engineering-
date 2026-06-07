@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.config import settings
@@ -24,3 +24,9 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(user_profiles)"))
+        columns = [row[1] for row in result]
+        if "current_module_id" not in columns:
+            conn.execute(text("ALTER TABLE user_profiles ADD COLUMN current_module_id INTEGER"))
+            conn.commit()

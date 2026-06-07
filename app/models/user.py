@@ -30,6 +30,7 @@ class UserProfile(Base):
     goals = Column(String, default="")
     profiler_done = Column(Boolean, default=False)
     tutor_introduced = Column(Boolean, default=False)
+    current_module_id = Column(Integer, default=None)
     total_score = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

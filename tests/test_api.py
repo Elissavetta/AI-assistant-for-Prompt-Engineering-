@@ -2,6 +2,7 @@ import os
 import uuid
 
 import pytest
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest")
@@ -11,6 +12,13 @@ from app.models.user import User
 from app.services.auth_service import hash_password, create_access_token, decode_access_token
 
 Base.metadata.create_all(bind=engine)
+
+with engine.connect() as conn:
+    result = conn.execute(text("PRAGMA table_info(user_profiles)"))
+    columns = [row[1] for row in result]
+    if "current_module_id" not in columns:
+        conn.execute(text("ALTER TABLE user_profiles ADD COLUMN current_module_id INTEGER"))
+        conn.commit()
 
 
 @pytest.fixture
@@ -298,6 +306,69 @@ class TestSessionCache:
         msgs = session.get_openai_messages()
         msgs.append({"role": "user", "content": "injected"})
         assert len(session.get_openai_messages()) == 1
+
+    def test_set_current_module_persists_to_profile(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.set_current_module(4)
+        assert session._current_module_id == 4
+        assert session.profile.current_module_id == 4
+        db.commit()
+
+        db.refresh(profile)
+        assert profile.current_module_id == 4
+
+    def test_load_session_restores_module_from_profile(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        profile.current_module_id = 3
+        db.commit()
+        db.refresh(profile)
+
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        assert session.get_active_module() == 3
+
+    def test_is_returning_user_true(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        profile.level = "newbie"
+        profile.tutor_introduced = True
+        db.commit()
+
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        assert session.is_returning_user() is True
+
+    def test_is_returning_user_false_no_level(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        profile.tutor_introduced = True
+        db.commit()
+
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        assert session.is_returning_user() is False
+
+    def test_is_returning_user_false_has_conversation(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        profile.level = "newbie"
+        profile.tutor_introduced = True
+        db.commit()
+
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        session.add_user_message("hello")
+        assert session.is_returning_user() is False
 
 
 class TestConfig:

@@ -28,7 +28,7 @@ class UserSession:
         self.modules = modules
         self.conversation: list[dict] = []
         self.mode: str = "lesson"
-        self._current_module_id: int | None = None
+        self._current_module_id: int | None = profile.current_module_id
         self._is_api: bool = False
         self._last_eval_context: str = ""
         self._last_score: int | None = None
@@ -109,6 +109,7 @@ class UserSession:
 
     def set_current_module(self, module_id: int):
         self._current_module_id = module_id
+        self.profile.current_module_id = module_id
 
     def get_active_module(self) -> int:
         if self._current_module_id is not None:
@@ -117,6 +118,13 @@ class UserSession:
 
     def has_profiler_level(self) -> bool:
         return self.profile.level != ""
+
+    def is_returning_user(self) -> bool:
+        return (
+            self.profile.tutor_introduced
+            and self.profile.level != ""
+            and len(self.conversation) == 0
+        )
 
     def completed_modules_count(self) -> int:
         return sum(1 for mid in MODULE_ORDER if self.is_module_completed(mid))
