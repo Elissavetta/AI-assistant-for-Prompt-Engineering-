@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -6,10 +7,20 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from app.config import settings
+from app.config import settings, logger
 from app.database import init_db
 from app.routers import auth_router, chat_router, profile_router
 from app.routers.openai import router as openai_router
+
+
+def _setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 async def _session_cleanup_task():
@@ -21,10 +32,13 @@ async def _session_cleanup_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _setup_logging()
     init_db()
+    logger.info("PROMPT UP started")
     task = asyncio.create_task(_session_cleanup_task())
     yield
     task.cancel()
+    logger.info("PROMPT UP shutting down")
 
 
 app = FastAPI(

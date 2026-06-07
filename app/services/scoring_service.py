@@ -1,3 +1,5 @@
+from app.config import MODULE_COMPLETION_SCORE
+
 MODULE_NAMES = {
     1: "Структура промпта",
     2: "Улучшение плохого промпта",
@@ -28,6 +30,6 @@ def calculate_level(total_score: int) -> str:
 
 
 def get_module_badge(module_id: int, score: int) -> str:
-    if score >= 50:
+    if score >= MODULE_COMPLETION_SCORE:
         return MODULE_BADGES.get(module_id, "")
     return ""

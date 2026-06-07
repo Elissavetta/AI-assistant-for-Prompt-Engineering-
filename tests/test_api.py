@@ -1,5 +1,10 @@
+import os
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest")
 
 from app.database import SessionLocal, Base, engine
 from app.models.user import User
@@ -25,8 +30,8 @@ def db():
 @pytest.fixture
 def test_user(db):
     user = User(
-        username="testuser",
-        email="test@test.com",
+        username=f"testuser_{uuid.uuid4().hex[:8]}",
+        email=f"test_{uuid.uuid4().hex[:8]}@test.com",
         hashed_password=hash_password("testpass123"),
     )
     db.add(user)
@@ -49,9 +54,10 @@ def auth_headers(auth_token):
 
 class TestAuth:
     def test_register(self, client, db):
+        username = f"newuser_{uuid.uuid4().hex[:8]}"
         response = client.post("/api/auth/register", json={
-            "username": "newuser",
-            "email": "new@test.com",
+            "username": username,
+            "email": f"{username}@test.com",
             "password": "pass123456"
         })
         assert response.status_code == 200
@@ -59,22 +65,38 @@ class TestAuth:
         assert "access_token" in data
         assert data["token_type"] == "bearer"
 
-        cleanup_user = db.query(User).filter(User.username == "newuser").first()
+        cleanup_user = db.query(User).filter(User.username == username).first()
         if cleanup_user:
             db.delete(cleanup_user)
             db.commit()
 
     def test_register_duplicate(self, client, test_user):
         response = client.post("/api/auth/register", json={
-            "username": "testuser",
+            "username": test_user.username,
             "email": "other@test.com",
             "password": "pass123456"
         })
         assert response.status_code == 400
 
+    def test_register_short_password(self, client):
+        response = client.post("/api/auth/register", json={
+            "username": "shortpwuser",
+            "email": "short@test.com",
+            "password": "12345"
+        })
+        assert response.status_code == 422
+
+    def test_register_invalid_email(self, client):
+        response = client.post("/api/auth/register", json={
+            "username": "bademailuser",
+            "email": "not-an-email",
+            "password": "pass123456"
+        })
+        assert response.status_code == 422
+
     def test_login(self, client, test_user):
         response = client.post("/api/auth/login", json={
-            "username": "testuser",
+            "username": test_user.username,
             "password": "testpass123"
         })
         assert response.status_code == 200
@@ -83,7 +105,7 @@ class TestAuth:
 
     def test_login_wrong_password(self, client, test_user):
         response = client.post("/api/auth/login", json={
-            "username": "testuser",
+            "username": test_user.username,
             "password": "wrongpass"
         })
         assert response.status_code == 401
@@ -94,7 +116,7 @@ class TestProfile:
         response = client.get("/api/profile/me", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["username"] == "testuser"
+        assert data["username"] == test_user.username
         assert "level" in data
 
     def test_unauthorized(self, client):
@@ -219,3 +241,116 @@ class TestOrchestrator:
         session = load_session(test_user, profile, modules)
         session.set_current_module(3)
         assert session.get_active_module() == 3
+
+
+class TestSessionCache:
+    def test_awaiting_state_enum(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        assert session.get_awaiting_state_enum() == AwaitingState.NONE
+        assert session.get_awaiting_state() == ""
+
+    def test_awaiting_state_answer(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Вот задание\n[ОЖИДАЕТСЯ ОТВЕТ]\n✏️ Напиши свой промпт ниже", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.ANSWER
+        assert session.get_awaiting_state() == "ANSWER"
+
+    def test_awaiting_state_choice(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Хочешь ещё задание?\n[ОЖИДАЕТСЯ ВЫБОР]", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
+        assert session.get_awaiting_state() == "CHOICE"
+
+    def test_awaiting_state_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Какой язык?\n[ОЖИДАЕТСЯ УТОЧНЕНИЕ]", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.CLARIFICATION
+        assert session.get_awaiting_state() == "CLARIFICATION"
+
+    def test_immutable_messages(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_user_message("hello")
+        msgs = session.get_openai_messages()
+        msgs.append({"role": "user", "content": "injected"})
+        assert len(session.get_openai_messages()) == 1
+
+
+class TestConfig:
+    def test_constants_defined(self):
+        from app.config import (
+            MIN_SUBMISSION_LENGTH,
+            MODULE_COMPLETION_SCORE,
+            EVALUATOR_MAX_TOKENS,
+            MARKER_AWAITING_ANSWER,
+            MARKER_LEVEL,
+        )
+        assert MIN_SUBMISSION_LENGTH > 0
+        assert MODULE_COMPLETION_SCORE == 50
+        assert EVALUATOR_MAX_TOKENS == 450
+        assert MARKER_AWAITING_ANSWER == "[ОЖИДАЕТСЯ ОТВЕТ]"
+        assert MARKER_LEVEL == "УРОВЕНЬ:"
+
+    def test_secret_key_required(self):
+        from pydantic import ValidationError
+        from pydantic_settings import BaseSettings, SettingsConfigDict
+        from pathlib import Path
+
+        class TestSettings(BaseSettings):
+            APP_NAME: str = "TEST"
+            SECRET_KEY: str = ""
+            model_config = SettingsConfigDict(extra="ignore")
+
+            def model_post_init(self, __context) -> None:
+                if not self.SECRET_KEY:
+                    raise ValueError("SECRET_KEY must be set")
+
+        with pytest.raises(ValidationError):
+            TestSettings(SECRET_KEY="")
+
+
+class TestOpenAIRouter:
+    def test_list_models(self, client):
+        response = client.get("/models")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert any(m["id"] == "prompt-up" for m in data["data"])
+
+    def test_derive_conversation_id_uses_sha256(self):
+        from app.routers.openai import _derive_conversation_id, ChatMessage
+        msgs = [ChatMessage(role="user", content="hello")]
+        cid = _derive_conversation_id(msgs)
+        assert len(cid) == 16
+        assert all(c in "0123456789abcdef" for c in cid)
+
+    def test_strip_intro(self):
+        from app.routers.openai import _strip_intro
+        text = "🚀 Режим Prompt Up! Просто напиши любой промпт\n\nДавай начнём"
+        result = _strip_intro(text)
+        assert "Режим Prompt Up" not in result
+        assert "Давай начнём" in result

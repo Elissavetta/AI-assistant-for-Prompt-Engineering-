@@ -1,14 +1,24 @@
+import enum
 import time
 
+from app.config import (
+    MAX_CONVERSATION_HISTORY,
+    SESSION_TTL_SECONDS,
+    MARKER_AWAITING_ANSWER,
+    MARKER_AWAITING_CHOICE,
+    MARKER_AWAITING_CLARIFICATION,
+    MARKER_LEVEL,
+    MODULE_COMPLETION_SCORE,
+)
 from app.models.user import User, UserProfile, ModuleProgress
-from app.services.scoring_service import MODULE_NAMES, MODULE_ORDER
+from app.services.scoring_service import MODULE_ORDER
 
-MAX_CONVERSATION_HISTORY = 20
-SESSION_TTL_SECONDS = 1800
 
-AWAITING_ANSWER = "[ОЖИДАЕТСЯ ОТВЕТ]"
-AWAITING_CHOICE = "[ОЖИДАЕТСЯ ВЫБОР]"
-AWAITING_CLARIFICATION = "[ОЖИДАЕТСЯ УТОЧНЕНИЕ]"
+class AwaitingState(enum.Enum):
+    NONE = ""
+    ANSWER = "ANSWER"
+    CHOICE = "CHOICE"
+    CLARIFICATION = "CLARIFICATION"
 
 
 class UserSession:
@@ -24,6 +34,7 @@ class UserSession:
         self._last_score: int | None = None
         self._clarification_rounds: int = 0
         self._last_activity: float = time.time()
+        self._awaiting_state: AwaitingState = AwaitingState.NONE
 
     def add_user_message(self, content: str):
         self.conversation.append({"role": "user", "content": content})
@@ -36,10 +47,11 @@ class UserSession:
             msg["agent"] = agent
         self.conversation.append(msg)
         self._last_activity = time.time()
+        self._update_awaiting_state(content)
         self._trim()
 
     def get_openai_messages(self) -> list[dict]:
-        return self.conversation
+        return list(self.conversation)
 
     def get_last_assistant_message(self) -> str:
         for msg in reversed(self.conversation):
@@ -51,20 +63,25 @@ class UserSession:
         if len(self.conversation) > MAX_CONVERSATION_HISTORY:
             self.conversation = self.conversation[-MAX_CONVERSATION_HISTORY:]
 
+    def _update_awaiting_state(self, last_message: str):
+        if MARKER_AWAITING_CLARIFICATION in last_message:
+            self._awaiting_state = AwaitingState.CLARIFICATION
+        elif MARKER_AWAITING_ANSWER in last_message:
+            self._awaiting_state = AwaitingState.ANSWER
+        elif MARKER_AWAITING_CHOICE in last_message:
+            self._awaiting_state = AwaitingState.CHOICE
+        else:
+            if any(kw in last_message for kw in ["🎯 **Задание:**", "🎯**Задание:**", "Задание:**"]):
+                if "SCORE:" not in last_message:
+                    self._awaiting_state = AwaitingState.ANSWER
+                    return
+            self._awaiting_state = AwaitingState.NONE
+
     def get_awaiting_state(self) -> str:
-        last = self.get_last_assistant_message()
-        if not last:
-            return ""
-        if AWAITING_CLARIFICATION in last:
-            return "CLARIFICATION"
-        if AWAITING_ANSWER in last:
-            return "ANSWER"
-        if AWAITING_CHOICE in last:
-            return "CHOICE"
-        if any(kw in last for kw in ["🎯 **Задание:**", "🎯**Задание:**", "Задание:**"]):
-            if "SCORE:" not in last:
-                return "ANSWER"
-        return ""
+        return self._awaiting_state.value
+
+    def get_awaiting_state_enum(self) -> AwaitingState:
+        return self._awaiting_state
 
     def get_module_score(self, module_id: int) -> int:
         mp = self.modules.get(module_id)
@@ -82,7 +99,7 @@ class UserSession:
             self.profile.total_score += score
 
     def is_module_completed(self, module_id: int) -> bool:
-        return self.get_module_score(module_id) >= 50
+        return self.get_module_score(module_id) >= MODULE_COMPLETION_SCORE
 
     def get_next_module(self) -> int:
         for mid in MODULE_ORDER:

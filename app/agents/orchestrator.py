@@ -1,6 +1,7 @@
 import re
 
-from app.services.session_cache import AWAITING_ANSWER, AWAITING_CHOICE, AWAITING_CLARIFICATION
+from app.config import MIN_SUBMISSION_LENGTH, MARKER_LEVEL
+from app.services.session_cache import AwaitingState
 
 PROMPT_UP_KEYWORDS = ["prompt up", "promptup", "промпт ап", "режим prompt", "режим prompt up", "свободный режим"]
 MODULE_KEYWORDS = ["хочу пройти модуль", "пройти модуль", "переключи на модуль", "вернуться к урокам", "вернись к урокам", "хочу вернуться к урокам", "научиться писать"]
@@ -10,7 +11,7 @@ POSITIVE_WORDS = ["да", "хочу", "давай", "ещё", "еще", "кон�
 
 
 def is_user_submission(user_message: str) -> bool:
-    return len(user_message.strip()) > 30
+    return len(user_message.strip()) > MIN_SUBMISSION_LENGTH
 
 
 def is_user_wants_more(user_message: str) -> bool:
@@ -44,15 +45,15 @@ def determine_agent(session) -> str:
             session.set_current_module(mid)
         return "TUTOR"
 
-    state = session.get_awaiting_state()
+    state = session.get_awaiting_state_enum()
 
-    if state == "CLARIFICATION":
+    if state == AwaitingState.CLARIFICATION:
         return "TUTOR"
 
-    if state == "ANSWER" and is_user_submission(user_message):
+    if state == AwaitingState.ANSWER and is_user_submission(user_message):
         return "EVALUATOR_THEN_TUTOR"
 
-    if state == "CHOICE" and is_user_wants_more(user_message):
+    if state == AwaitingState.CHOICE and is_user_wants_more(user_message):
         return "TUTOR"
 
     return "TUTOR"

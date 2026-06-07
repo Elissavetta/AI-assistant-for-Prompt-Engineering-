@@ -1,4 +1,9 @@
+import logging
+
+from app.config import MARKER_LEVEL
 from app.services.scoring_service import MODULE_NAMES, MODULE_ORDER
+
+logger = logging.getLogger("prompt_trainer")
 
 
 def build_user_context(session, eval_context: str = "", score: int | None = None, module_id: int | None = None) -> str:
@@ -26,7 +31,7 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
             ctx += "\n\nМОДУЛЬ 5: пользователь отвечает списком файлов с обоснованием, а не промптом. Оценивай выбор файлов, а не структуру промпта."
 
         last = session.get_last_assistant_message()
-        if "УРОВЕНЬ:" in last.upper():
+        if MARKER_LEVEL in last.upper():
             if not profile.tutor_introduced:
                 ctx += "\n\nFIRST_TUTOR: да"
 

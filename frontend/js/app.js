@@ -80,15 +80,23 @@ function updateUI(profile, progress) {
     const modulesList = document.getElementById('modules-list');
     const completedModules = (progress || []).filter(p => p.completed).map(p => p.module_id);
     modulesList.innerHTML = MODULE_META.map(m => `
-        <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}" onclick="selectModule(${m.id}, '${m.name}')">
+        <div class="module-item ${completedModules.includes(m.id) ? 'completed' : ''}" data-module="${m.id}">
             <div class="module-icon">${completedModules.includes(m.id) ? '✅' : m.icon}</div>
-            <span>${m.name}</span>
+            <span>${escapeHtml(m.name)}</span>
         </div>
     `).join('');
+
+    modulesList.querySelectorAll('.module-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const mid = parseInt(el.dataset.module, 10);
+            const meta = MODULE_META.find(m => m.id === mid);
+            if (meta) selectModule(mid, meta.name);
+        });
+    });
 }
 
 function selectModule(moduleId, moduleName) {
-    sendMessage(`Хочу пройти модуль ${moduleId}: ${moduleName}`);
+    sendMessage('Хочу пройти модуль ' + moduleId + ': ' + moduleName);
 }
 
 function selectPromptUp() {
@@ -391,17 +399,22 @@ function renderMarkdown(text) {
     return html;
 }
 
+let _refreshTimer = null;
+
 async function refreshProfile() {
-    try {
-        const profile = await fetchProfile();
-        if (!profile) return;
-        const progress = await fetchProgress();
-        window._lastProfile = profile;
-        window._lastProgress = progress;
-        updateUI(profile, progress);
-    } catch {
-        // non-critical — UI already rendered
-    }
+    if (_refreshTimer) clearTimeout(_refreshTimer);
+    _refreshTimer = setTimeout(async () => {
+        try {
+            const profile = await fetchProfile();
+            if (!profile) return;
+            const progress = await fetchProgress();
+            window._lastProfile = profile;
+            window._lastProgress = progress;
+            updateUI(profile, progress);
+        } catch {
+            // non-critical — UI already rendered
+        }
+    }, 300);
 }
 
 function showScoreNotification(points, totalScore) {

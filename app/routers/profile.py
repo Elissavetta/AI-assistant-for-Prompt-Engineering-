@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.config import MODULE_COMPLETION_SCORE
 from app.database import get_db
 from app.models.user import User
 from app.schemas.progress import ProfileOut, ProgressOut
@@ -19,7 +20,7 @@ def get_profile(user: User = Depends(get_current_user), db: Session = Depends(ge
     badges = []
     for mid in MODULE_ORDER:
         mp = modules.get(mid)
-        if mp and mp.score >= 50:
+        if mp and mp.score >= MODULE_COMPLETION_SCORE:
             badge = get_module_badge(mid, mp.score)
             if badge:
                 badges.append(badge)

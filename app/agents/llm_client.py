@@ -1,7 +1,12 @@
+import asyncio
+import logging
+
 import httpx
 from openai import AsyncOpenAI
 
 from app.config import settings
+
+logger = logging.getLogger("prompt_trainer")
 
 _client: AsyncOpenAI | None = None
 
@@ -32,21 +37,30 @@ async def call_llm(
 ) -> str:
     client = get_llm_client()
     all_messages = [{"role": "system", "content": system_prompt}] + messages
-    response = await client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=all_messages,
-        temperature=temperature,
-        max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
-    message = response.choices[0].message
-    content = message.content
-    if content:
-        return content
-    reasoning = getattr(message, "reasoning_content", None)
-    if reasoning:
-        return reasoning
-    return ""
+
+    for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
+        try:
+            response = await client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=all_messages,
+                temperature=temperature,
+                max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            message = response.choices[0].message
+            content = message.content
+            if content:
+                return content
+            reasoning = getattr(message, "reasoning_content", None)
+            if reasoning:
+                return reasoning
+            return ""
+        except Exception as e:
+            logger.warning("LLM call attempt %d/%d failed: %s", attempt, settings.LLM_RETRY_ATTEMPTS, e)
+            if attempt == settings.LLM_RETRY_ATTEMPTS:
+                raise
+            backoff = settings.LLM_RETRY_BACKOFF * (2 ** (attempt - 1))
+            await asyncio.sleep(backoff)
 
 
 async def stream_llm(
@@ -57,14 +71,27 @@ async def stream_llm(
 ):
     client = get_llm_client()
     all_messages = [{"role": "system", "content": system_prompt}] + messages
-    stream = await client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=all_messages,
-        temperature=temperature,
-        max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
-        stream=True,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
+
+    for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
+        try:
+            stream = await client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=all_messages,
+                temperature=temperature,
+                max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
+                stream=True,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            break
+        except Exception as e:
+            logger.warning("LLM stream attempt %d/%d failed: %s", attempt, settings.LLM_RETRY_ATTEMPTS, e)
+            if attempt == settings.LLM_RETRY_ATTEMPTS:
+                raise
+            backoff = settings.LLM_RETRY_BACKOFF * (2 ** (attempt - 1))
+            await asyncio.sleep(backoff)
+    else:
+        return
+
     async for chunk in stream:
         if not chunk.choices:
             continue

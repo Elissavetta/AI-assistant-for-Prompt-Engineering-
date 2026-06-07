@@ -1,6 +1,6 @@
 import re
 
-PROFILER_MAX_TURNS = 5
+from app.config import PROFILER_MAX_TURNS, LEVEL_NEWBIE, MARKER_LEVEL
 
 
 def parse_profile(response: str) -> dict:
@@ -24,7 +24,7 @@ def force_profile_completion(session) -> bool:
         return False
     assistant_turns = sum(1 for m in session.conversation if m.get("role") == "assistant")
     if assistant_turns >= PROFILER_MAX_TURNS:
-        session.profile.level = "newbie"
+        session.profile.level = LEVEL_NEWBIE
         if not session.profile.sphere:
             session.profile.sphere = "общее"
         if not session.profile.goals:
@@ -34,7 +34,7 @@ def force_profile_completion(session) -> bool:
 
 
 def update_user_from_profile(session, response: str):
-    if "УРОВЕНЬ:" in response.upper():
+    if MARKER_LEVEL in response.upper():
         profile_data = parse_profile(response)
         if profile_data.get("level"):
             session.profile.level = profile_data["level"]

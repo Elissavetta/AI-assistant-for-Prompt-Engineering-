@@ -1,7 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    message: str
-    conversation_id: str = None
+    message: str = Field(min_length=1)
     mode: str = "lesson"

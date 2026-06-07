@@ -1,11 +1,15 @@
-import re
+import logging
 
 from app.agents.llm_client import call_llm, stream_llm
+from app.config import EVALUATOR_MAX_TOKENS, EVALUATOR_TEMPERATURE
 from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
 from app.services.scoring_service import calculate_level
 
+logger = logging.getLogger("prompt_trainer")
+
 
 def extract_score(text: str) -> int:
+    import re
     patterns = [
         r'SCORE:\s*(-?\d+)',
         r'ОЦЕНКА:\s*(-?\d+)',
@@ -21,7 +25,10 @@ def extract_score(text: str) -> int:
 
 async def evaluate_and_score(session, db) -> tuple[str, int]:
     openai_messages = session.get_openai_messages()
-    eval_response = await call_llm(EVALUATOR_SYSTEM_PROMPT, openai_messages, 0.3, 450)
+    eval_response = await call_llm(
+        EVALUATOR_SYSTEM_PROMPT, openai_messages,
+        EVALUATOR_TEMPERATURE, EVALUATOR_MAX_TOKENS,
+    )
 
     score = extract_score(eval_response)
     module_id = session.get_active_module()
@@ -30,6 +37,7 @@ async def evaluate_and_score(session, db) -> tuple[str, int]:
     session.profile.level = calculate_level(session.profile.total_score)
     db.commit()
 
+    logger.info("Evaluated module %d: score=%d, total=%d", module_id, score, session.profile.total_score)
     return eval_response, score
 
 
