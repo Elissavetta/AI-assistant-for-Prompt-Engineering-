@@ -10,10 +10,10 @@ from app.database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    username = Column(String, unique=True, index=True, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String(255), unique=True, index=True, nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -23,11 +23,11 @@ class User(Base):
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id"), unique=True, nullable=False)
-    level = Column(String, default="")
-    sphere = Column(String, default="")
-    goals = Column(String, default="")
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), unique=True, nullable=False)
+    level = Column(String(255), default="")
+    sphere = Column(String(255), default="")
+    goals = Column(String(255), default="")
     profiler_done = Column(Boolean, default=False)
     tutor_introduced = Column(Boolean, default=False)
     current_module_id = Column(Integer, default=None)
@@ -41,8 +41,8 @@ class ModuleProgress(Base):
     __tablename__ = "module_progress"
     __table_args__ = (UniqueConstraint("user_id", "module_id", name="uq_user_module"),)
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     module_id = Column(Integer, nullable=False)
     score = Column(Integer, default=0)
     count = Column(Integer, default=0)

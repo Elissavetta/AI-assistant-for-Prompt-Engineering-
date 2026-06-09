@@ -389,8 +389,8 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         let finished = false;
 
         function render() {
-            const typing = el.querySelector('.typing-indicator');
-            if (typing) typing.remove();
+            const skeleton = el.querySelector('.skeleton-bubble');
+            if (skeleton) skeleton.remove();
             bubble.innerHTML = renderMarkdown(rawBuffer.slice(0, displayedLen));
             scrollToBottom();
         }
@@ -471,7 +471,7 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
 
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message message-assistant';
-        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
+        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="skeleton-bubble"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div></div>`;
         messages.appendChild(msgDiv);
         scrollToBottom();
         return msgDiv;
@@ -515,6 +515,8 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         const streamingEl = addStreamingMessage();
         const typewriter = createTypewriter(streamingEl);
 
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
         try {
             const res = await fetch(`${API}/chat/message/stream`, {
                 method: 'POST',
@@ -527,7 +529,6 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let agent = '';
-            let score = null;
             let currentEl = streamingEl;
             let currentTypewriter = typewriter;
             let isFinalized = false;
@@ -568,7 +569,6 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
                     currentTypewriter.push(data.token);
                 }
                 if (data.done) {
-                    score = data.score || null;
                     if (data.points && data.points > 0) {
                         showScoreNotification(data.points, data.total_score);
                     }
@@ -698,7 +698,7 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
             navAssignments.addEventListener('click', (e) => {
                 e.preventDefault();
                 setActiveTab(navAssignments);
-                currentMode = 'freeform';
+                currentMode = 'prompt_up';
                 sendMessage('Хочу перейти в режим Prompt Up');
             });
         }
@@ -943,7 +943,7 @@ class OnboardingTour {
         const welcomeDiv = document.createElement('div');
         welcomeDiv.className = 'onboarding-welcome';
         const rightOffset = 75;
-        welcomeDiv.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(calc(-50% + ${rightOffset}px),-50%);background:linear-gradient(135deg,var(--accent-bee),var(--accent-amber));color:#1A1A1A;padding:16px 32px;border-radius:50px;font-weight:600;z-index:10001;box-shadow:0 4px 20px rgba(0,0,0,0.2);cursor:pointer;font-size:18px;display:flex;align-items:center;gap:12px;white-space:nowrap;animation:fadeInScale 0.4s ease;`;
+        welcomeDiv.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(calc(-50% + ${rightOffset}px),-50%);background:linear-gradient(135deg,var(--accent-bee),var(--accent-amber));color:#1A1A1A;padding:16px 32px;border-radius:50px;font-weight:600;z-index:10001;box-shadow:0 4px 20px rgba(0,0,0,0.2);cursor:pointer;font-size:18px;display:flex;align-items:center;gap:12px;white-space:nowrap;animation:fadeIn 0.4s ease;`;
         welcomeDiv.innerHTML = 'Отлично! Гайд пройден. Начинайте обучение!';
         document.body.appendChild(welcomeDiv);
         setTimeout(() => { welcomeDiv.style.opacity = '1'; }, 10);

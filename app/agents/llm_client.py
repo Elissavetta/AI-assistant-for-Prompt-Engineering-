@@ -9,6 +9,7 @@ from app.config import settings
 logger = logging.getLogger("prompt_trainer")
 
 _client: AsyncOpenAI | None = None
+_client_lock = asyncio.Lock()
 
 
 def _build_verify() -> str | bool:
@@ -17,16 +18,19 @@ def _build_verify() -> str | bool:
     return settings.LLM_SSL_VERIFY
 
 
-def get_llm_client() -> AsyncOpenAI:
+async def get_llm_client() -> AsyncOpenAI:
     global _client
     if _client is not None:
         return _client
-    _client = AsyncOpenAI(
-        api_key=settings.LLM_API_KEY,
-        base_url=settings.LLM_BASE_URL,
-        http_client=httpx.AsyncClient(verify=_build_verify(), timeout=60.0),
-    )
-    return _client
+    async with _client_lock:
+        if _client is not None:
+            return _client
+        _client = AsyncOpenAI(
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
+            http_client=httpx.AsyncClient(verify=_build_verify(), timeout=60.0),
+        )
+        return _client
 
 
 async def call_llm(
@@ -35,7 +39,7 @@ async def call_llm(
     temperature: float = 0.7,
     max_tokens: int | None = None,
 ) -> str:
-    client = get_llm_client()
+    client = await get_llm_client()
     all_messages = [{"role": "system", "content": system_prompt}] + messages
 
     for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
@@ -69,7 +73,7 @@ async def stream_llm(
     temperature: float = 0.7,
     max_tokens: int | None = None,
 ):
-    client = get_llm_client()
+    client = await get_llm_client()
     all_messages = [{"role": "system", "content": system_prompt}] + messages
 
     for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
@@ -98,5 +102,3 @@ async def stream_llm(
         delta = chunk.choices[0].delta
         if delta.content:
             yield delta.content
-        elif hasattr(delta, "reasoning_content") and delta.reasoning_content:
-            pass

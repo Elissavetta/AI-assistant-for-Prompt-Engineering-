@@ -13,6 +13,7 @@ class ProfileOut(BaseModel):
     tasks_count: int = 0
     modules_completed: int = 0
     modules_total: int = 6
+    tutor_introduced: bool = False
 
 
 class ProgressOut(BaseModel):

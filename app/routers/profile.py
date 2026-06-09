@@ -37,6 +37,7 @@ def get_profile(user: User = Depends(get_current_user), db: Session = Depends(ge
         tasks_count=sum(mp.count for mp in modules.values()),
         modules_completed=sum(1 for mp in modules.values() if mp.is_completed),
         modules_total=len(MODULE_ORDER),
+        tutor_introduced=profile.tutor_introduced,
     )
 
 

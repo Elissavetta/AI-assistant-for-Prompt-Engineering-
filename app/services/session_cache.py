@@ -1,7 +1,10 @@
+import asyncio
 import enum
+import json
 import logging
 import re
-import time
+from dataclasses import dataclass, field, asdict
+from typing import Optional
 
 from app.config import (
     MAX_CONVERSATION_HISTORY,
@@ -25,24 +28,161 @@ class AwaitingState(enum.Enum):
     CLARIFICATION = "CLARIFICATION"
 
 
+# --- SessionState: JSON-сериализуемое состояние ---
+
+@dataclass
+class SessionState:
+    conversation: list[dict] = field(default_factory=list)
+    mode: str = "lesson"
+    awaiting_state: str = ""
+    current_module_id: Optional[int] = None
+    last_eval_context: str = ""
+    last_score: Optional[int] = None
+    clarification_rounds: int = 0
+    is_api: bool = False
+    conversation_id: str = ""
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, data: str) -> "SessionState":
+        d = json.loads(data)
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+# --- RedisSessionStore ---
+
+class RedisSessionStore:
+    def __init__(self, redis_url: str):
+        import redis.asyncio as aioredis
+        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+
+    async def get(self, key: str) -> Optional[SessionState]:
+        data = await self._redis.get(key)
+        if data:
+            return SessionState.from_json(data)
+        return None
+
+    async def set(self, key: str, state: SessionState, ttl: int = SESSION_TTL_SECONDS):
+        await self._redis.setex(key, ttl, state.to_json())
+
+    async def delete(self, key: str):
+        await self._redis.delete(key)
+
+    async def close(self):
+        await self._redis.aclose()
+
+
+class MemorySessionStore:
+    def __init__(self):
+        self._data: dict[str, tuple[float, SessionState]] = {}
+
+    async def get(self, key: str) -> Optional[SessionState]:
+        import time
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        expires_at, state = entry
+        if time.time() > expires_at:
+            del self._data[key]
+            return None
+        return state
+
+    async def set(self, key: str, state: SessionState, ttl: int = SESSION_TTL_SECONDS):
+        import time
+        self._data[key] = (time.time() + ttl, state)
+
+    async def delete(self, key: str):
+        self._data.pop(key, None)
+
+    async def close(self):
+        self._data.clear()
+
+
+_store: Optional[RedisSessionStore | MemorySessionStore] = None
+_store_lock = asyncio.Lock()
+
+
+async def get_store() -> RedisSessionStore | MemorySessionStore:
+    global _store
+    if _store is not None:
+        return _store
+    async with _store_lock:
+        if _store is not None:
+            return _store
+        from app.config import settings
+        if settings.REDIS_URL:
+            try:
+                _store = RedisSessionStore(settings.REDIS_URL)
+            except Exception:
+                logger.warning("Redis unavailable, using in-memory session store")
+                _store = MemorySessionStore()
+        else:
+            _store = MemorySessionStore()
+        return _store
+
+
+async def close_store():
+    global _store
+    if _store:
+        await _store.close()
+        _store = None
+
+
+# --- Key helpers ---
+
+def _user_session_key(user_id: str) -> str:
+    return f"session:{user_id}"
+
+
+def _api_session_key(conversation_id: str) -> str:
+    return f"api_session:{conversation_id}"
+
+
+# --- UserSession: runtime объект ---
+
+class _DummyProfile:
+    def __init__(self):
+        self.level = ""
+        self.sphere = ""
+        self.goals = ""
+        self.tutor_introduced = False
+        self.total_score = 0
+        self.current_module_id = None
+
+
 class UserSession:
-    def __init__(self, user: User, profile: UserProfile, modules: dict[int, ModuleProgress]):
+    def __init__(self, user: User | None, profile: UserProfile, modules: dict[int, ModuleProgress], state: SessionState | None = None):
         self.user = user
         self.profile = profile
         self.modules = modules
-        self.conversation: list[dict] = []
-        self.mode: str = "lesson"
-        self._current_module_id: int | None = profile.current_module_id
-        self._is_api: bool = False
-        self._last_eval_context: str = ""
-        self._last_score: int | None = None
-        self._clarification_rounds: int = 0
-        self._last_activity: float = time.time()
-        self._awaiting_state: AwaitingState = AwaitingState.NONE
+        s = state or SessionState()
+        self.conversation: list[dict] = s.conversation
+        self.mode: str = s.mode
+        self._current_module_id: int | None = s.current_module_id if s.current_module_id is not None else profile.current_module_id
+        self._is_api: bool = s.is_api
+        self._last_eval_context: str = s.last_eval_context
+        self._last_score: int | None = s.last_score
+        self._clarification_rounds: int = s.clarification_rounds
+        self._awaiting_state: AwaitingState = AwaitingState(s.awaiting_state)
+        self._conversation_id: str = s.conversation_id
+
+    def to_state(self) -> SessionState:
+        return SessionState(
+            conversation=self.conversation,
+            mode=self.mode,
+            awaiting_state=self._awaiting_state.value,
+            current_module_id=self._current_module_id,
+            last_eval_context=self._last_eval_context,
+            last_score=self._last_score,
+            clarification_rounds=self._clarification_rounds,
+            is_api=self._is_api,
+            conversation_id=self._conversation_id,
+        )
 
     def add_user_message(self, content: str):
         self.conversation.append({"role": "user", "content": content})
-        self._last_activity = time.time()
         self._trim()
 
     def add_assistant_message(self, content: str, agent: str = ""):
@@ -50,12 +190,11 @@ class UserSession:
         if agent:
             msg["agent"] = agent
         self.conversation.append(msg)
-        self._last_activity = time.time()
         self._update_awaiting_state(content)
         self._trim()
 
     def get_openai_messages(self) -> list[dict]:
-        return list(self.conversation)
+        return [dict(m) for m in self.conversation]
 
     def get_last_assistant_message(self) -> str:
         for msg in reversed(self.conversation):
@@ -91,9 +230,6 @@ class UserSession:
                     self._awaiting_state = AwaitingState.ANSWER
                     return
             self._awaiting_state = AwaitingState.NONE
-
-    def get_awaiting_state(self) -> str:
-        return self._awaiting_state.value
 
     def get_awaiting_state_enum(self) -> AwaitingState:
         return self._awaiting_state
@@ -139,64 +275,43 @@ class UserSession:
         return (
             self.profile.tutor_introduced
             and self.profile.level != ""
-            and len(self.conversation) == 0
+            and sum(1 for m in self.conversation if m.get("role") == "user") == 1
         )
 
-    def completed_modules_count(self) -> int:
-        return sum(1 for mid in MODULE_ORDER if self.is_module_completed(mid))
 
-    def tasks_done_count(self) -> int:
-        return sum(self.get_module_count(mid) for mid in MODULE_ORDER)
+# --- High-level async helpers ---
 
-
-_sessions: dict[str, UserSession] = {}
-
-
-def get_session(user_id: str) -> UserSession | None:
-    return _sessions.get(user_id)
-
-
-def load_session(user: User, profile: UserProfile, modules: dict[int, ModuleProgress]) -> UserSession:
-    session = _sessions.get(user.id)
-    if session:
-        session.user = user
-        session.profile = profile
-        session.modules = modules
-        if profile.current_module_id is not None:
-            session._current_module_id = profile.current_module_id
-        return session
-    session = UserSession(user, profile, modules)
-    _sessions[user.id] = session
+async def load_session(user: User, profile: UserProfile, modules: dict[int, ModuleProgress]) -> UserSession:
+    store = await get_store()
+    key = _user_session_key(user.id)
+    state = await store.get(key)
+    if state and profile.current_module_id is not None:
+        state.current_module_id = profile.current_module_id
+    session = UserSession(user, profile, modules, state)
     return session
 
 
-def clear_session(user_id: str):
-    _sessions.pop(user_id, None)
+async def save_session(session: UserSession):
+    store = await get_store()
+    if session.user:
+        key = _user_session_key(session.user.id)
+        await store.set(key, session.to_state())
 
 
-_openai_sessions: dict[str, UserSession] = {}
-
-
-def get_or_create_openai_session(conversation_id: str) -> UserSession:
-    session = _openai_sessions.get(conversation_id)
-    if session:
-        return session
-    profile = UserProfile(level="", sphere="", goals="")
-    session = UserSession(user=None, profile=profile, modules={})
-    session.mode = "prompt_up"
-    _openai_sessions[conversation_id] = session
+async def load_api_session(conversation_id: str, mode: str = "prompt_up") -> UserSession:
+    store = await get_store()
+    key = _api_session_key(conversation_id)
+    state = await store.get(key)
+    if not state:
+        state = SessionState(mode=mode)
+    session = UserSession(None, _DummyProfile(), {}, state)
+    session._is_api = True
+    session._conversation_id = conversation_id
     return session
 
 
-def clear_openai_session(conversation_id: str):
-    _openai_sessions.pop(conversation_id, None)
-
-
-def cleanup_expired_sessions():
-    now = time.time()
-    expired = [
-        cid for cid, session in _openai_sessions.items()
-        if now - session._last_activity > SESSION_TTL_SECONDS
-    ]
-    for cid in expired:
-        del _openai_sessions[cid]
+async def save_api_session(session: UserSession):
+    if session._conversation_id:
+        store = await get_store()
+        key = _api_session_key(session._conversation_id)
+        await store.set(key, session.to_state())

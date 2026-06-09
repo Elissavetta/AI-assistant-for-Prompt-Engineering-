@@ -4,6 +4,8 @@ from app.agents.llm_client import call_llm, stream_llm
 from app.config import EVALUATOR_MAX_TOKENS, EVALUATOR_TEMPERATURE
 from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
 from app.services.scoring_service import calculate_level
+from app.services.prompt_up_service import save_eval_result, reset_clarification
+from app.utils import run_in_thread
 
 logger = logging.getLogger("prompt_trainer")
 
@@ -21,8 +23,8 @@ def extract_score(text: str) -> int:
         if match:
             score = int(match.group(1))
             return min(max(score, 0), 10)
-    logger.warning("extract_score: no pattern found, returning default 5. Last 300 chars: %s", text[-300:])
-    return 5
+    logger.debug("extract_score: no pattern found, returning 0")
+    return 0
 
 
 async def evaluate_and_score(session, db) -> tuple[str, int]:
@@ -35,7 +37,7 @@ async def evaluate_and_score(session, db) -> tuple[str, int]:
     score = extract_score(eval_response)
     module_id = session.get_active_module()
 
-    logger.debug("Evaluator response (last 200 chars): %s", eval_response[-200:])
+    logger.debug("Evaluator response (last 50 chars): %s", eval_response[-50:])
     logger.info("Evaluated module %d: score=%d, total=%d", module_id, score, session.profile.total_score)
     return eval_response, score
 
@@ -43,6 +45,7 @@ async def evaluate_and_score(session, db) -> tuple[str, int]:
 async def stream_evaluate(session, db):
     import json
 
+    reset_clarification(session)
     openai_messages = session.get_openai_messages()
 
     full_response = []
@@ -56,10 +59,14 @@ async def stream_evaluate(session, db):
     module_id = session.get_active_module()
 
     session.add_assistant_message(response_text, "TUTOR")
+    save_eval_result(session, response_text, score)
     session.add_module_score(module_id, score)
     session.profile.level = calculate_level(session.profile.total_score)
-    db.commit()
+    await run_in_thread(db.commit)
 
     logger.info("Evaluated module %d: score=%d, total=%d", module_id, score, session.profile.total_score)
 
     yield f"data: {json.dumps({'done': True, 'agent_done': 'TUTOR', 'score': score, 'points': score, 'total_score': session.profile.total_score}, ensure_ascii=False)}\n\n"
+
+    from app.services.session_cache import save_session
+    await save_session(session)

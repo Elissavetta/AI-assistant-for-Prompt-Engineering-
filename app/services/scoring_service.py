@@ -1,4 +1,4 @@
-from app.config import MODULE_COMPLETION_SCORE
+from app.config import MODULE_COMPLETION_SCORE, LEVEL_NEWBIE, LEVEL_INTERMEDIATE, LEVEL_ADVANCED
 
 MODULE_NAMES = {
     1: "Структура промпта",
@@ -23,10 +23,10 @@ MODULE_ORDER = [1, 2, 3, 4, 5, 6]
 
 def calculate_level(total_score: int) -> str:
     if total_score >= 300:
-        return "advanced"
+        return LEVEL_ADVANCED
     if total_score >= 100:
-        return "intermediate"
-    return "newbie"
+        return LEVEL_INTERMEDIATE
+    return LEVEL_NEWBIE
 
 
 def get_module_badge(module_id: int, score: int) -> str:

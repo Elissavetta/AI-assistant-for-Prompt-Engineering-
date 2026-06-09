@@ -9,9 +9,7 @@
     --accent-bee: #FFC800;
     --accent-bee-hover: #FFE055;
     --accent-amber: #EB7000;
-    --accent-amber-hover: #FF9040;
     --accent-teal: #00C4A0;
-    --accent-cyan: #009FC7;
     --accent-violet: #8A3DFF;
     --accent-violet-light: #A55FFF;
     --accent-magenta: #E6007A;
@@ -23,7 +21,6 @@
     --radius-sm: 8px;
     --transition: all 0.2s ease;
     --achievement-bg: #FFF9E5;
-    --achievements-header-color: #FFFFFF;
     --scrollbar-track: #2A2A2A;
     --scrollbar-thumb: #555555;
     --scrollbar-thumb-hover: #777777;
@@ -40,7 +37,6 @@
     --border-color: #E5E5E0;
     --shadow: 0 4px 24px rgba(0,0,0,0.06);
     --achievement-bg: #FFF9E5;
-    --achievements-header-color: #141414;
     --scrollbar-track: #E5E5E0;
     --scrollbar-thumb: #CCCCC5;
     --scrollbar-thumb-hover: #BBBBB0;
@@ -67,19 +63,22 @@ body {
 /* Подключение шрифтов из папки Sans */
 @font-face {
     font-family: 'Beeline Sans';
-    src: url('../sans/BeelineSans-Regular.ttf') format('truetype');
+    src: url('../sans/BeelineSans-Regular.woff2') format('woff2'),
+         url('../sans/BeelineSans-Regular.ttf') format('truetype');
     font-weight: 400;
     font-display: swap;
 }
 @font-face {
     font-family: 'Beeline Sans';
-    src: url('../sans/BeelineSans-Medium.ttf') format('truetype');
+    src: url('../sans/BeelineSans-Medium.woff2') format('woff2'),
+         url('../sans/BeelineSans-Medium.ttf') format('truetype');
     font-weight: 500;
     font-display: swap;
 }
 @font-face {
     font-family: 'Beeline Sans';
-    src: url('../sans/BeelineSans-Bold.ttf') format('truetype');
+    src: url('../sans/BeelineSans-Bold.woff2') format('woff2'),
+         url('../sans/BeelineSans-Bold.ttf') format('truetype');
     font-weight: 700;
     font-display: swap;
 }
@@ -134,11 +133,6 @@ body {
 /* ========================================
    HEADER & NAVIGATION
    ======================================== */
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
 .header {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
@@ -238,12 +232,6 @@ body {
 .auth-card .logo {
     justify-content: center;
     margin-bottom: 24px;
-}
-.auth-card .logo-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: repeating-linear-gradient(180deg, #FFC800 0px, #FFC800 5px, #141414 5px, #141414 9px);
 }
 .auth-card h1 {
     font-size: 28px;
@@ -813,22 +801,36 @@ body {
 .message-bubble {
     padding: 14px 18px;
     line-height: 1.6;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
-.typing-indicator {
-    display: flex;
-    gap: 4px;
-    padding: 14px 18px;
+.skeleton-bubble {
 }
-.typing-indicator span {
-    width: 8px;
-    height: 8px;
-    background: var(--accent-bee);
-    border-radius: 50%;
-    animation: typing 1.4s infinite;
+.skeleton-line {
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.04) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    margin-bottom: 8px;
 }
-@keyframes typing {
-    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-    30% { transform: translateY(-8px); opacity: 1; }
+.skeleton-line:last-child {
+    width: 60%;
+    margin-bottom: 0;
+}
+.skeleton-line:nth-child(1) { width: 90%; }
+.skeleton-line:nth-child(2) { width: 75%; }
+.skeleton-line:nth-child(3) { width: 50%; }
+[data-theme="light"] .skeleton-line {
+    background: linear-gradient(90deg, rgba(0,0,0,0.06) 25%, rgba(0,0,0,0.12) 50%, rgba(0,0,0,0.06) 75%);
+    background-size: 200% 100%;
+}
+.message-assistant .message-bubble:has(.skeleton-bubble) {
+    min-height: 80px;
+}
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
 }
 .chat-input-area {
     padding: 16px 24px 24px;
@@ -1021,26 +1023,4 @@ body {
 
 .onboarding-skip:hover {
     transform: translateY(-1px);
-}
-
-@keyframes slideUp {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-}
-
-@keyframes slideDown {
-    from {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-    to {
-        opacity: 0;
-        transform: translateX(-50%) translateY(20px);
-    }
 }

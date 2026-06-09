@@ -2,10 +2,10 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest")
+os.environ.setdefault("REDIS_URL", "redis://fake")
 
 from app.database import SessionLocal, Base, engine
 from app.models.user import User
@@ -13,12 +13,26 @@ from app.services.auth_service import hash_password, create_access_token, decode
 
 Base.metadata.create_all(bind=engine)
 
-with engine.connect() as conn:
-    result = conn.execute(text("PRAGMA table_info(user_profiles)"))
-    columns = [row[1] for row in result]
-    if "current_module_id" not in columns:
-        conn.execute(text("ALTER TABLE user_profiles ADD COLUMN current_module_id INTEGER"))
-        conn.commit()
+
+def _make_session(user, profile, modules):
+    from app.services.session_cache import UserSession, SessionState
+    return UserSession(user, profile, modules, SessionState())
+
+
+@pytest.fixture(autouse=True)
+def _mock_redis():
+    import fakeredis.aioredis
+    from app.services import session_cache as sc
+
+    fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    original_store = sc._store
+    store = sc.RedisSessionStore.__new__(sc.RedisSessionStore)
+    store._redis = fake
+    sc._store = store
+
+    yield
+
+    sc._store = original_store
 
 
 @pytest.fixture
@@ -164,7 +178,7 @@ class TestEvaluator:
         assert extract_score("SCORE: 8") == 8
         assert extract_score("SCORE: 0") == 0
         assert extract_score("SCORE: 10") == 10
-        assert extract_score("Some text without score") == 5
+        assert extract_score("Some text without score") == 0
 
     def test_extract_score_clamped(self):
         from app.agents.evaluator import extract_score
@@ -272,14 +286,14 @@ class TestOrchestrator:
 
     def test_determine_agent_evaluator(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         from app.agents.orchestrator import determine_agent
         profile = get_or_create_profile(db, test_user)
         profile.level = "newbie"
         profile.tutor_introduced = True
         db.commit()
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         session.add_assistant_message("Напиши промпт\n[ОЖИДАЕТСЯ ОТВЕТ]", "TUTOR")
         session.add_user_message("Вот мой промпт: Ты аналитик. Проанализируй данные из файла. Ответь в формате таблицы. Используй данные: ads_data.csv с колонками date, campaign, clicks, conversions, spend за январь 2025. Сравни эффективность кампаний.")
         agent = determine_agent(session)
@@ -287,33 +301,47 @@ class TestOrchestrator:
 
     def test_determine_agent_tutor_for_choice(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         from app.agents.orchestrator import determine_agent
         profile = get_or_create_profile(db, test_user)
         profile.level = "newbie"
         profile.tutor_introduced = True
         db.commit()
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         session.add_assistant_message("Хочешь ещё задание?\n[ОЖИДАЕТСЯ ВЫБОР]", "TUTOR")
         session.add_user_message("Да, давай")
         agent = determine_agent(session)
         assert agent == "TUTOR"
 
-    def test_get_active_module_default(self, db, test_user):
+    def test_determine_agent_prompt_up_returns_tutor(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
+        from app.agents.orchestrator import determine_agent
+        profile = get_or_create_profile(db, test_user)
+        profile.level = "newbie"
+        profile.tutor_introduced = True
+        db.commit()
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+        session.mode = "prompt_up"
+        session.add_assistant_message("Напиши свой промпт\n[ОЖИДАЕТСЯ ОТВЕТ]", "TUTOR")
+        session.add_user_message("Напиши промпт для анализа данных с ролями и контекстом в формате таблицы")
+        agent = determine_agent(session)
+        assert agent == "TUTOR"
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         assert session.get_active_module() == 1
 
     def test_set_current_module(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         session.set_current_module(3)
         assert session.get_active_module() == 3
 
@@ -321,53 +349,53 @@ class TestOrchestrator:
 class TestSessionCache:
     def test_awaiting_state_enum(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         assert session.get_awaiting_state_enum() == AwaitingState.NONE
-        assert session.get_awaiting_state() == ""
+        assert session.get_awaiting_state_enum().value == ""
 
     def test_awaiting_state_answer(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Вот задание\n[ОЖИДАЕТСЯ ОТВЕТ]\nНапиши свой промпт ниже", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.ANSWER
-        assert session.get_awaiting_state() == "ANSWER"
+        assert session.get_awaiting_state_enum().value == "ANSWER"
 
     def test_awaiting_state_choice(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Хочешь ещё задание?\n[ОЖИДАЕТСЯ ВЫБОР]", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
-        assert session.get_awaiting_state() == "CHOICE"
+        assert session.get_awaiting_state_enum().value == "CHOICE"
 
     def test_awaiting_state_clarification(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Какой язык?\n[ОЖИДАЕТСЯ УТОЧНЕНИЕ]", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.CLARIFICATION
-        assert session.get_awaiting_state() == "CLARIFICATION"
+        assert session.get_awaiting_state_enum().value == "CLARIFICATION"
 
     def test_immutable_messages(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_user_message("hello")
         msgs = session.get_openai_messages()
@@ -376,10 +404,10 @@ class TestSessionCache:
 
     def test_set_current_module_persists_to_profile(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.set_current_module(4)
         assert session._current_module_id == 4
@@ -391,50 +419,53 @@ class TestSessionCache:
 
     def test_load_session_restores_module_from_profile(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         profile.current_module_id = 3
         db.commit()
         db.refresh(profile)
 
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         assert session.get_active_module() == 3
 
     def test_is_returning_user_true(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         profile.level = "newbie"
         profile.tutor_introduced = True
         db.commit()
 
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
+        session.add_user_message("hello")
         assert session.is_returning_user() is True
 
     def test_is_returning_user_false_no_level(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         profile.tutor_introduced = True
         db.commit()
 
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         assert session.is_returning_user() is False
 
     def test_is_returning_user_false_has_conversation(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session
+        
         profile = get_or_create_profile(db, test_user)
         profile.level = "newbie"
         profile.tutor_introduced = True
         db.commit()
 
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
         session.add_user_message("hello")
+        session.add_assistant_message("hi", "TUTOR")
+        session.add_user_message("another message")
         assert session.is_returning_user() is False
 
 
@@ -477,7 +508,9 @@ class TestOpenAIRouter:
         assert response.status_code == 200
         data = response.json()
         assert data["object"] == "list"
-        assert any(m["id"] == "prompt-up" for m in data["data"])
+        ids = [m["id"] for m in data["data"]]
+        assert "prompt-up-mode" in ids
+        assert "education-mode" in ids
 
     def test_derive_conversation_id_uses_sha256(self):
         from app.routers.openai import _derive_conversation_id, ChatMessage
@@ -485,6 +518,9 @@ class TestOpenAIRouter:
         cid = _derive_conversation_id(msgs)
         assert len(cid) == 16
         assert all(c in "0123456789abcdef" for c in cid)
+        msgs2 = [ChatMessage(role="user", content="hello")]
+        cid2 = _derive_conversation_id(msgs2)
+        assert cid != cid2
 
     def test_strip_intro(self):
         from app.routers.openai import _strip_intro
@@ -497,30 +533,30 @@ class TestOpenAIRouter:
 class TestTruncatedMarker:
     def test_truncated_marker_answer(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Вот твоё задание! Напиши промпт для summaries.\n[ОЖИДАЕТ", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.ANSWER
 
     def test_truncated_marker_choice(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Модуль пройден! Продолжим дальше?\n[ОЖИДАЕТСЯ В", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
 
     def test_truncated_marker_clarification(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Уточни, какой язык программирования?\n[ОЖИДАЕТСЯ У", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.CLARIFICATION
@@ -529,10 +565,10 @@ class TestTruncatedMarker:
 class TestUserSeesTutor:
     def test_evaluator_response_labelled_as_tutor(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
-        from app.services.session_cache import load_session, AwaitingState
+        from app.services.session_cache import AwaitingState
         profile = get_or_create_profile(db, test_user)
         modules = get_module_progress_map(db, test_user.id)
-        session = load_session(test_user, profile, modules)
+        session = _make_session(test_user, profile, modules)
 
         session.add_assistant_message("Что хорошо: Роль указана\n\nЧто можно улучшить: Нет ограничений\n\nБаллы: 8/10\n\nОтличная работа!\n[ОЖИДАЕТСЯ ВЫБОР]\n\nSCORE: 8", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
@@ -547,3 +583,178 @@ class TestUserSeesTutor:
         for e in events:
             data = json.loads(e)
             assert data.get('agent') == 'TUTOR' or data.get('agent_done') == 'TUTOR'
+
+
+class TestPromptUpService:
+    def test_save_eval_result_stores_context(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import save_eval_result
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        save_eval_result(session, "Some eval response", 7)
+        assert session._last_eval_context == "Some eval response"
+        assert session._last_score == 7
+
+    def test_save_eval_result_increments_clarification_rounds(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import save_eval_result
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._awaiting_state = AwaitingState.CLARIFICATION
+        save_eval_result(session, "eval text", 5)
+        assert session._clarification_rounds == 1
+
+    def test_save_eval_result_no_increment_when_not_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import save_eval_result
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._awaiting_state = AwaitingState.CHOICE
+        save_eval_result(session, "eval text", 6)
+        assert session._clarification_rounds == 0
+
+    def test_reset_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
+        from app.services.prompt_up_service import reset_clarification
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._clarification_rounds = 3
+        reset_clarification(session)
+        assert session._clarification_rounds == 0
+
+    def test_advance_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
+        from app.services.prompt_up_service import advance_clarification
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        advance_clarification(session)
+        assert session._clarification_rounds == 1
+        advance_clarification(session)
+        assert session._clarification_rounds == 2
+
+    def test_build_clarification_suffix_with_eval_context(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
+        from app.services.prompt_up_service import build_clarification_suffix
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._last_eval_context = "Роль: есть, Задание: нет"
+        session._last_score = 5
+        session._clarification_rounds = 1
+        suffix = build_clarification_suffix(session)
+        assert "РЕЗУЛЬТАТ ОЦЕНКИ" in suffix
+        assert "5/10" in suffix
+
+    def test_build_clarification_suffix_final_round(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
+        from app.services.prompt_up_service import build_clarification_suffix
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._clarification_rounds = 2
+        suffix = build_clarification_suffix(session)
+        assert "ПОСЛЕДНИЙ РАУНД" in suffix
+
+    def test_build_clarification_suffix_empty(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        
+        from app.services.prompt_up_service import build_clarification_suffix
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._last_eval_context = ""
+        session._clarification_rounds = 0
+        suffix = build_clarification_suffix(session)
+        assert "улучшенную версию" in suffix
+
+    def test_needs_first_analysis_true(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import needs_first_analysis
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session.add_user_message("Напиши промпт для анализа данных с ролями и контекстом в формате таблицы")
+        session._awaiting_state = AwaitingState.ANSWER
+        assert needs_first_analysis(session) is True
+
+    def test_needs_first_analysis_false_short_message(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import needs_first_analysis
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session.add_user_message("да")
+        session._awaiting_state = AwaitingState.ANSWER
+        assert needs_first_analysis(session) is False
+
+    def test_needs_first_analysis_false_choice_state(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import needs_first_analysis
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session.add_user_message("Напиши промпт для анализа данных с ролями и контекстом в формате таблицы")
+        session._awaiting_state = AwaitingState.CHOICE
+        assert needs_first_analysis(session) is False
+
+    def test_is_clarification_round_true(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import is_clarification_round
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._awaiting_state = AwaitingState.CLARIFICATION
+        session._clarification_rounds = 0
+        assert is_clarification_round(session) is True
+
+    def test_is_clarification_round_false_not_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import is_clarification_round
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._awaiting_state = AwaitingState.ANSWER
+        session._clarification_rounds = 0
+        assert is_clarification_round(session) is False
+
+    def test_is_clarification_round_false_max_rounds(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import AwaitingState
+        from app.services.prompt_up_service import is_clarification_round
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = _make_session(test_user, profile, modules)
+
+        session._awaiting_state = AwaitingState.CLARIFICATION
+        session._clarification_rounds = 2
+        assert is_clarification_round(session) is False

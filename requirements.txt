@@ -6,4 +6,5 @@ pydantic-settings==2.14.1
 python-jose[cryptography]==3.5.0
 bcrypt==5.0.0
 openai==2.38.0
-python-multipart==0.0.30
+redis[hiredis]>=5.0.0
+fakeredis[lua]>=2.20.0

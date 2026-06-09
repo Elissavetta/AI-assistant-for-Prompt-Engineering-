@@ -11,7 +11,7 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
     profile = session.profile
 
     if mode == "prompt_up":
-        ctx = "Режим: prompt_up"
+        ctx = "Режим: prompt_up\n\nВАЖНО: Этот режим ПОЛНОСТЬЮ независим от профиля пользователя. НЕ используй данные о сфере, уровне, целях из предыдущих сообщений. Анализируй ТОЛЬКО сам промпт без привязки к профессии."
         if getattr(session, '_is_api', False):
             ctx += "\n\nSKIP_INTRO: да"
     else:
@@ -51,12 +51,8 @@ def get_agent_config(agent_name: str, user_context: str = "") -> tuple[str, floa
     if agent_name == "PROFILER":
         from app.prompts.profiler_prompt import PROFILER_SYSTEM_PROMPT
         return PROFILER_SYSTEM_PROMPT, 0.5, 250
-    elif agent_name == "EVALUATOR":
-        from app.prompts.evaluator_prompt import EVALUATOR_SYSTEM_PROMPT
-        return EVALUATOR_SYSTEM_PROMPT, 0.3, 450
-    else:
-        from app.prompts.tutor_prompt import TUTOR_SYSTEM_PROMPT
-        system = TUTOR_SYSTEM_PROMPT
-        if user_context:
-            system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
-        return system, 0.6, 800
+    from app.prompts.tutor_prompt import TUTOR_SYSTEM_PROMPT
+    system = TUTOR_SYSTEM_PROMPT
+    if user_context:
+        system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
+    return system, 0.6, 800

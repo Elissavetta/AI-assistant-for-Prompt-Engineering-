@@ -29,6 +29,7 @@ LEVEL_ADVANCED = "advanced"
 class Settings(BaseSettings):
     APP_NAME: str = "PROMPT UP"
     DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'prompt_trainer.db'}"
+    REDIS_URL: str = ""
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
@@ -38,11 +39,12 @@ class Settings(BaseSettings):
     LLM_SSL_VERIFY: bool = True
     LLM_CERT_PATH: str = ""
     LLM_MAX_TOKENS: int = 800
-    MAX_CONVERSATION_HISTORY: int = MAX_CONVERSATION_HISTORY
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     LLM_RETRY_ATTEMPTS: int = 3
     LLM_RETRY_BACKOFF: float = 1.0
+    CORS_ORIGINS: str = ""
+    RATE_LIMIT_PER_MINUTE: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

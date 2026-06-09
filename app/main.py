@@ -1,9 +1,11 @@
-import asyncio
 import logging
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -23,11 +25,33 @@ def _setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-async def _session_cleanup_task():
-    from app.services.session_cache import cleanup_expired_sessions
-    while True:
-        await asyncio.sleep(60)
-        cleanup_expired_sessions()
+class _RateLimitEntry:
+    __slots__ = ("timestamps",)
+
+    def __init__(self):
+        self.timestamps: list[float] = []
+
+
+class RateLimiter:
+    def __init__(self, max_requests: int, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._clients: dict[str, _RateLimitEntry] = defaultdict(_RateLimitEntry)
+
+    def is_allowed(self, key: str) -> bool:
+        entry = self._clients[key]
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        entry.timestamps = [t for t in entry.timestamps if t > cutoff]
+        if len(entry.timestamps) >= self.max_requests:
+            return False
+        entry.timestamps.append(now)
+        return True
+
+
+_rate_limiter = RateLimiter(max_requests=settings.RATE_LIMIT_PER_MINUTE)
+
+_RATE_LIMITED_PATHS = ("/api/chat/message", "/chat/completions")
 
 
 @asynccontextmanager
@@ -35,9 +59,9 @@ async def lifespan(app: FastAPI):
     _setup_logging()
     init_db()
     logger.info("PROMPT UP started")
-    task = asyncio.create_task(_session_cleanup_task())
     yield
-    task.cancel()
+    from app.services.session_cache import close_store
+    await close_store()
     logger.info("PROMPT UP shutting down")
 
 
@@ -47,6 +71,26 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if any(request.url.path.startswith(p) for p in _RATE_LIMITED_PATHS):
+        client_key = request.client.host if request.client else "unknown"
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            client_key = auth[7:27]
+        if not _rate_limiter.is_allowed(client_key):
+            return Response(content="Rate limit exceeded", status_code=429)
+    return await call_next(request)
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")

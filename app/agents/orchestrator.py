@@ -1,6 +1,6 @@
 import re
 
-from app.config import MIN_SUBMISSION_LENGTH, MARKER_LEVEL
+from app.config import MIN_SUBMISSION_LENGTH
 from app.services.session_cache import AwaitingState
 
 PROMPT_UP_KEYWORDS = ["prompt up", "promptup", "промпт ап", "режим prompt", "режим prompt up", "свободный режим"]
@@ -61,6 +61,9 @@ def determine_agent(session) -> str:
     state = session.get_awaiting_state_enum()
 
     if state == AwaitingState.CLARIFICATION:
+        return "TUTOR"
+
+    if session.mode == "prompt_up" and is_user_submission(user_message):
         return "TUTOR"
 
     if state == AwaitingState.ANSWER and is_user_submission(user_message):

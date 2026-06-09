@@ -9,9 +9,19 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-https://api.ai.beeline.ru/api/v3}
       - LLM_SSL_VERIFY=${LLM_SSL_VERIFY:-false}
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///prompt_trainer.db}
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    expose:
+      - "6379"
     volumes:
-      - db-data:/app/data
+      - redis-data:/data
     restart: unless-stopped
 
 volumes:
-  db-data:
+  redis-data:
