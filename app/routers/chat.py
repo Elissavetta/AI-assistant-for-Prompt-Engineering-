@@ -15,7 +15,7 @@ from app.services.progress_service import get_or_create_profile, get_module_prog
 from app.services.session_cache import load_session
 from app.agents.orchestrator import determine_agent
 from app.agents.profiler import force_profile_completion, update_user_from_profile
-from app.agents.evaluator import evaluate_then_tutor, stream_evaluate_then_tutor
+from app.agents.evaluator import evaluate_and_score, stream_evaluate
 from app.agents.tutor import build_user_context, get_agent_config
 from app.agents.llm_client import stream_llm, call_llm
 
@@ -58,6 +58,19 @@ async def _handle_profiler_then_tutor(session, response: str, db, stream: bool =
 
 
 async def _call_agent(agent_name: str, session, db):
+    if agent_name == "EVALUATOR":
+        response, score = await evaluate_and_score(session, db)
+        session.add_assistant_message(response, "TUTOR")
+        update_user_from_profile(session, response)
+        await _run_in_thread(db.commit)
+        return {
+            "agent": "TUTOR",
+            "response": response,
+            "score": score,
+            "points": score,
+            "total_score": session.profile.total_score,
+        }
+
     user_context = build_user_context(session)
     system_prompt, temperature, max_tokens = get_agent_config(agent_name, user_context)
     openai_messages = session.get_openai_messages()
@@ -80,6 +93,9 @@ async def _call_agent(agent_name: str, session, db):
 
 
 async def _stream_agent(agent_name: str, session, db):
+    if agent_name == "EVALUATOR":
+        return stream_evaluate(session, db)
+
     user_context = build_user_context(session)
     system_prompt, temperature, max_tokens = get_agent_config(agent_name, user_context)
     openai_messages = session.get_openai_messages()
@@ -138,16 +154,6 @@ async def send_message(
     agent_name = determine_agent(session)
     logger.info("User %s → agent: %s", user.id, agent_name)
 
-    if agent_name == "EVALUATOR_THEN_TUTOR":
-        response, score = await evaluate_then_tutor(session, db)
-        return {
-            "agent": "EVALUATOR_THEN_TUTOR",
-            "response": response,
-            "score": score,
-            "points": score,
-            "total_score": session.profile.total_score,
-        }
-
     return await _call_agent(agent_name, session, db)
 
 
@@ -168,9 +174,6 @@ async def send_message_stream(
 
     agent_name = determine_agent(session)
     logger.info("User %s → agent: %s (stream)", user.id, agent_name)
-
-    if agent_name == "EVALUATOR_THEN_TUTOR":
-        return StreamingResponse(stream_evaluate_then_tutor(session, db), media_type="text/event-stream")
 
     generator = await _stream_agent(agent_name, session, db)
     return StreamingResponse(generator, media_type="text/event-stream")

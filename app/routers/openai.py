@@ -49,7 +49,11 @@ def _derive_conversation_id(messages: list[ChatMessage]) -> str:
 
 
 def _strip_intro(text: str) -> str:
-    return re.sub(r'🚀\s*Режим\s*Prompt\s*Up!.*?(?:\n){2,}', '', text, count=1, flags=re.DOTALL).strip()
+    return re.sub(r'Режим\s*Prompt\s*Up!.*?(?:\n){2,}', '', text, count=1, flags=re.DOTALL).strip()
+
+
+def _strip_score_line(text: str) -> str:
+    return re.sub(r'^SCORE:\s*\d+\s*$', '', text, flags=re.MULTILINE).strip()
 
 
 def _make_response(content: str, conversation_id: str, model: str = "prompt-up") -> dict:
@@ -116,19 +120,8 @@ async def _run_prompt_up(session):
     step = _determine_step(session)
     logger.info("Prompt Up step: %s", step)
 
-    if step == "clarification":
-        session._clarification_rounds += 1
-        suffix = ""
-        if session._clarification_rounds >= MAX_CLARIFICATION_ROUNDS:
-            suffix = "\n\nПОСЛЕДНИЙ РАУНД: больше НЕ задавай уточняющие вопросы. Дай улучшенную версию промпта с тем что есть. Укажи чего не хватало."
-        return await _build_tutor_response(
-            session,
-            suffix or f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{session._last_eval_context}\n\nФАКТИЧЕСКИЙ БАЛЛ: {session._last_score}/10" if session._last_eval_context else "",
-        )
-
     if step == "evaluate":
         session._clarification_rounds = 0
-
         openai_messages = session.get_openai_messages()
         eval_response = await call_llm(
             EVALUATOR_SYSTEM_PROMPT, openai_messages,
@@ -136,14 +129,27 @@ async def _run_prompt_up(session):
         )
         score = extract_score(eval_response)
         session.add_assistant_message(eval_response, "EVALUATOR")
-
         session._last_eval_context = eval_response
         session._last_score = score
 
-        return await _build_tutor_response(
-            session,
-            f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_response}\n\nФАКТИЧЕСКИЙ БАЛЛ: {score}/10",
-        )
+        state = session.get_awaiting_state_enum()
+        if state == AwaitingState.CLARIFICATION:
+            session._clarification_rounds += 1
+
+        return _strip_intro(_strip_score_line(eval_response))
+
+    if step == "clarification":
+        session._clarification_rounds += 1
+        suffix = ""
+        if session._clarification_rounds >= MAX_CLARIFICATION_ROUNDS:
+            suffix = "\n\nПОСЛЕДНИЙ РАУНД: больше НЕ задавай уточняющие вопросы. Дай улучшенную версию промпта с тем что есть. Укажи чего не хватало."
+        elif session._last_eval_context:
+            suffix = f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{session._last_eval_context}\n\nФАКТИЧЕСКИЙ БАЛЛ: {session._last_score}/10"
+
+        if session._last_eval_context and session._clarification_rounds < MAX_CLARIFICATION_ROUNDS:
+            return await _build_tutor_response(session, suffix)
+
+        return await _build_tutor_response(session, suffix)
 
     return await _build_tutor_response(session)
 
@@ -166,10 +172,42 @@ async def _stream_tutor_response(session, conversation_id: str, user_context_suf
     yield "data:\n"
 
 
+async def _stream_evaluator_response(session, conversation_id: str):
+    openai_messages = session.get_openai_messages()
+
+    yield _make_chunk({"role": "assistant", "content": ""}, conversation_id)
+    full_response = []
+    async for token in stream_llm(
+        EVALUATOR_SYSTEM_PROMPT, openai_messages,
+        EVALUATOR_TEMPERATURE, EVALUATOR_MAX_TOKENS,
+    ):
+        full_response.append(token)
+        yield _make_chunk({"content": token}, conversation_id)
+
+    response_text = "".join(full_response)
+    score = extract_score(response_text)
+    session.add_assistant_message(response_text, "EVALUATOR")
+    session._last_eval_context = response_text
+    session._last_score = score
+
+    state = session.get_awaiting_state_enum()
+    if state == AwaitingState.CLARIFICATION:
+        session._clarification_rounds += 1
+
+    yield _make_chunk({}, conversation_id, finish_reason="stop")
+    yield "data:\n"
+
+
 async def _stream_prompt_up(session):
     step = _determine_step(session)
     conversation_id = getattr(session, "_conversation_id", "unknown")
     logger.info("Prompt Up stream step: %s", step)
+
+    if step == "evaluate":
+        session._clarification_rounds = 0
+        async for chunk in _stream_evaluator_response(session, conversation_id):
+            yield chunk
+        return
 
     if step == "clarification":
         session._clarification_rounds += 1
@@ -179,27 +217,6 @@ async def _stream_prompt_up(session):
         elif session._last_eval_context:
             suffix = f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{session._last_eval_context}\n\nФАКТИЧЕСКИЙ БАЛЛ: {session._last_score}/10"
         async for chunk in _stream_tutor_response(session, conversation_id, suffix):
-            yield chunk
-        return
-
-    if step == "evaluate":
-        session._clarification_rounds = 0
-
-        openai_messages = session.get_openai_messages()
-        eval_response = await call_llm(
-            EVALUATOR_SYSTEM_PROMPT, openai_messages,
-            EVALUATOR_TEMPERATURE, EVALUATOR_MAX_TOKENS,
-        )
-        score = extract_score(eval_response)
-        session.add_assistant_message(eval_response, "EVALUATOR")
-
-        session._last_eval_context = eval_response
-        session._last_score = score
-
-        async for chunk in _stream_tutor_response(
-            session, conversation_id,
-            f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_response}\n\nФАКТИЧЕСКИЙ БАЛЛ: {score}/10",
-        ):
             yield chunk
         return
 

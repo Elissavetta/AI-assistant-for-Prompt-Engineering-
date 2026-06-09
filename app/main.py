@@ -56,8 +56,10 @@ app.include_router(openai_router)
 frontend_path = Path(__file__).parent.parent / "frontend"
 
 if frontend_path.exists():
-    app.mount("/static", StaticFiles(directory=str(frontend_path / "css")), name="static-css")
+    app.mount("/css", StaticFiles(directory=str(frontend_path / "css")), name="static-css")
     app.mount("/js", StaticFiles(directory=str(frontend_path / "js")), name="static-js")
+    app.mount("/sans", StaticFiles(directory=str(frontend_path / "sans")), name="static-sans")
+    app.mount("/webfonts", StaticFiles(directory=str(frontend_path / "webfonts")), name="static-webfonts")
 
 
 @app.get("/")
@@ -74,6 +76,14 @@ async def serve_login():
     if login.exists():
         return FileResponse(str(login))
     return {"message": "Login page not found"}
+
+
+@app.get("/register")
+async def serve_register():
+    register = frontend_path / "index.html"
+    if register.exists():
+        return FileResponse(str(register))
+    return {"message": "Register page not found"}
 
 
 @app.get("/dashboard")

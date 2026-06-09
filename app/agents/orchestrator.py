@@ -9,6 +9,15 @@ NAV_KEYWORDS = MODULE_KEYWORDS + PROMPT_UP_KEYWORDS
 
 POSITIVE_WORDS = ["да", "хочу", "давай", "ещё", "еще", "конечно", "yes", "next", "дальше"]
 
+MODULE_ALIASES = {
+    "структура": 1, "архитектор": 1,
+    "улучшение": 2, "плохой промпт": 2,
+    "few-shot": 3, "few shot": 3, "фьюшот": 3, "примеры": 3,
+    "chain-of-thought": 4, "chain of thought": 4, "цепочка": 4, "рассуждение": 4,
+    "контекст": 5, "мастер контекста": 5, "файлы": 5, "данные": 5, "добавление контекста": 5,
+    "комплексный": 6, "с нуля": 6, "полный промпт": 6,
+}
+
 
 def is_user_submission(user_message: str) -> bool:
     return len(user_message.strip()) > MIN_SUBMISSION_LENGTH
@@ -29,6 +38,10 @@ def extract_module_id(user_message: str) -> int | None:
     if match:
         mid = int(match.group(1))
         if 1 <= mid <= 6:
+            return mid
+    text = user_message.lower()
+    for alias, mid in MODULE_ALIASES.items():
+        if alias in text:
             return mid
     return None
 
@@ -51,7 +64,7 @@ def determine_agent(session) -> str:
         return "TUTOR"
 
     if state == AwaitingState.ANSWER and is_user_submission(user_message):
-        return "EVALUATOR_THEN_TUTOR"
+        return "EVALUATOR"
 
     if state == AwaitingState.CHOICE and is_user_wants_more(user_message):
         return "TUTOR"

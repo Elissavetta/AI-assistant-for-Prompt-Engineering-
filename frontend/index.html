@@ -3,15 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PROMPT UP</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <title>PROMPT UP — Регистрация</title>
+    <link rel="stylesheet" href="css/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div class="auth-page">
         <div class="auth-card">
-            <div class="logo" style="justify-content:center;margin-bottom:24px;">
-                <div class="logo-icon"></div>
-                <span class="wordmark">PROMPT UP</span>
+            <div class="logo" style="justify-content: center; margin-bottom: 24px;">
+                <span class="wordmark-prompt" style="font-size: 26px; font-weight: 600;">PROMPT</span>
+                <span class="wordmark-up" style="font-size: 26px; font-weight: 800; color: #FFC800;">UP</span>
             </div>
             <h1>Добро пожаловать!</h1>
             <p class="subtitle">Начни обучение промпт-инжинирингу прямо сейчас</p>
@@ -36,36 +37,6 @@
             </div>
         </div>
     </div>
-    <script>
-        const API = '/api';
-        const form = document.getElementById('register-form');
-        const errorMsg = document.getElementById('error-msg');
-
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            errorMsg.style.display = 'none';
-            const username = document.getElementById('username').value;
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            try {
-                const res = await fetch(`${API}/auth/register`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, email, password })
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    errorMsg.textContent = data.detail || 'Ошибка регистрации';
-                    errorMsg.style.display = 'block';
-                    return;
-                }
-                localStorage.setItem('token', data.access_token);
-                window.location.href = '/dashboard';
-            } catch (err) {
-                errorMsg.textContent = 'Ошибка подключения к серверу';
-                errorMsg.style.display = 'block';
-            }
-        });
-    </script>
+    <script src="js/app.js"></script>
 </body>
 </html>

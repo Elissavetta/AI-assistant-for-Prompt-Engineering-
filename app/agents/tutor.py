@@ -15,7 +15,7 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
         if getattr(session, '_is_api', False):
             ctx += "\n\nSKIP_INTRO: да"
     else:
-        ctx = f"Уровень: {profile.level}, Сфера: {profile.sphere}, Цели: {profile.goals}"
+        ctx = f"Уровень: {profile.level}, Сфера: {profile.sphere or 'общая'}, Цели: {profile.goals or 'освоить промпт-инжиниринг'}"
         current_module = module_id or session.get_active_module()
         session.set_current_module(current_module)
         module_score = session.get_module_score(current_module)
@@ -59,4 +59,4 @@ def get_agent_config(agent_name: str, user_context: str = "") -> tuple[str, floa
         system = TUTOR_SYSTEM_PROMPT
         if user_context:
             system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
-        return system, 0.6, 500
+        return system, 0.6, 800

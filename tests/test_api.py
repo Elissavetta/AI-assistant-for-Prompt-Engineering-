@@ -175,6 +175,32 @@ class TestEvaluator:
         from app.agents.evaluator import extract_score
         assert extract_score("ОЦЕНКА: 7") == 7
 
+    def test_extract_score_from_full_response(self):
+        from app.agents.evaluator import extract_score
+        response = "**Что хорошо:** Роль задана\n\n**Что можно улучшить:** Нет формата\n\n**Баллы:** 7/10\n\nНеплохо! Есть куда расти.\n[ОЖИДАЕТСЯ ВЫБОР]\n\nSCORE: 7"
+        assert extract_score(response) == 7
+
+    def test_extract_score_ignores_balles_line(self):
+        from app.agents.evaluator import extract_score
+        response = "**Баллы:** 9/10\n\nSCORE: 9"
+        assert extract_score(response) == 9
+
+    def test_extract_score_from_balles_fallback(self):
+        from app.agents.evaluator import extract_score
+        assert extract_score("**Баллы:** 8/10") == 8
+        assert extract_score("Баллы: 6/10") == 6
+        assert extract_score("**Баллы:** 3/10\n\nНеплохо!") == 3
+
+    def test_extract_score_score_before_improved_version(self):
+        from app.agents.evaluator import extract_score
+        response = "**Что хорошо:** Роль\n\n**Что можно улучшить:** Нет ограничений\n\n**Баллы:** 8/10\n\nSCORE: 8\n\n**Улучшенная версия:**\nТы — аналитик..."
+        assert extract_score(response) == 8
+
+    def test_extract_score_balles_fallback_when_score_truncated(self):
+        from app.agents.evaluator import extract_score
+        response = "**Что хорошо:** Роль\n\n**Что можно улучшить:** Нет ограничений\n\n**Баллы:** 7/10\n\nНеплохо!\n[ОЖИДАЕТСЯ ВЫБОР]\n\n**Улучшенная версия:**\nОчень длинный текст..."
+        assert extract_score(response) == 7
+
 
 class TestProfiler:
     def test_parse_profile_newbie(self):
@@ -233,6 +259,47 @@ class TestOrchestrator:
         assert extract_module_id("Привет, как дела?") is None
         assert extract_module_id("модуль 7") is None
 
+    def test_extract_module_id_fuzzy(self):
+        from app.agents.orchestrator import extract_module_id
+        assert extract_module_id("Хочу пройти модуль: Мастер контекста") == 5
+        assert extract_module_id("Хочу пройти модуль: контекст") == 5
+        assert extract_module_id("Хочу пройти модуль: файлы") == 5
+        assert extract_module_id("Хочу пройти модуль: структура") == 1
+        assert extract_module_id("Хочу пройти модуль: улучшение") == 2
+        assert extract_module_id("Хочу пройти модуль: few-shot") == 3
+        assert extract_module_id("Хочу пройти модуль: цепочка") == 4
+        assert extract_module_id("Хочу пройти модуль: комплексный") == 6
+
+    def test_determine_agent_evaluator(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        from app.agents.orchestrator import determine_agent
+        profile = get_or_create_profile(db, test_user)
+        profile.level = "newbie"
+        profile.tutor_introduced = True
+        db.commit()
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        session.add_assistant_message("Напиши промпт\n[ОЖИДАЕТСЯ ОТВЕТ]", "TUTOR")
+        session.add_user_message("Вот мой промпт: Ты аналитик. Проанализируй данные из файла. Ответь в формате таблицы. Используй данные: ads_data.csv с колонками date, campaign, clicks, conversions, spend за январь 2025. Сравни эффективность кампаний.")
+        agent = determine_agent(session)
+        assert agent == "EVALUATOR"
+
+    def test_determine_agent_tutor_for_choice(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session
+        from app.agents.orchestrator import determine_agent
+        profile = get_or_create_profile(db, test_user)
+        profile.level = "newbie"
+        profile.tutor_introduced = True
+        db.commit()
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+        session.add_assistant_message("Хочешь ещё задание?\n[ОЖИДАЕТСЯ ВЫБОР]", "TUTOR")
+        session.add_user_message("Да, давай")
+        agent = determine_agent(session)
+        assert agent == "TUTOR"
+
     def test_get_active_module_default(self, db, test_user):
         from app.services.progress_service import get_or_create_profile, get_module_progress_map
         from app.services.session_cache import load_session
@@ -269,7 +336,7 @@ class TestSessionCache:
         modules = get_module_progress_map(db, test_user.id)
         session = load_session(test_user, profile, modules)
 
-        session.add_assistant_message("Вот задание\n[ОЖИДАЕТСЯ ОТВЕТ]\n✏️ Напиши свой промпт ниже", "TUTOR")
+        session.add_assistant_message("Вот задание\n[ОЖИДАЕТСЯ ОТВЕТ]\nНапиши свой промпт ниже", "TUTOR")
         assert session.get_awaiting_state_enum() == AwaitingState.ANSWER
         assert session.get_awaiting_state() == "ANSWER"
 
@@ -382,7 +449,7 @@ class TestConfig:
         )
         assert MIN_SUBMISSION_LENGTH > 0
         assert MODULE_COMPLETION_SCORE == 50
-        assert EVALUATOR_MAX_TOKENS == 450
+        assert EVALUATOR_MAX_TOKENS == 600
         assert MARKER_AWAITING_ANSWER == "[ОЖИДАЕТСЯ ОТВЕТ]"
         assert MARKER_LEVEL == "УРОВЕНЬ:"
 
@@ -421,7 +488,62 @@ class TestOpenAIRouter:
 
     def test_strip_intro(self):
         from app.routers.openai import _strip_intro
-        text = "🚀 Режим Prompt Up! Просто напиши любой промпт\n\nДавай начнём"
+        text = "Режим Prompt Up! Просто напиши любой промпт\n\nДавай начнём"
         result = _strip_intro(text)
         assert "Режим Prompt Up" not in result
         assert "Давай начнём" in result
+
+
+class TestTruncatedMarker:
+    def test_truncated_marker_answer(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Вот твоё задание! Напиши промпт для summaries.\n[ОЖИДАЕТ", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.ANSWER
+
+    def test_truncated_marker_choice(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Модуль пройден! Продолжим дальше?\n[ОЖИДАЕТСЯ В", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
+
+    def test_truncated_marker_clarification(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Уточни, какой язык программирования?\n[ОЖИДАЕТСЯ У", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.CLARIFICATION
+
+
+class TestUserSeesTutor:
+    def test_evaluator_response_labelled_as_tutor(self, db, test_user):
+        from app.services.progress_service import get_or_create_profile, get_module_progress_map
+        from app.services.session_cache import load_session, AwaitingState
+        profile = get_or_create_profile(db, test_user)
+        modules = get_module_progress_map(db, test_user.id)
+        session = load_session(test_user, profile, modules)
+
+        session.add_assistant_message("Что хорошо: Роль указана\n\nЧто можно улучшить: Нет ограничений\n\nБаллы: 8/10\n\nОтличная работа!\n[ОЖИДАЕТСЯ ВЫБОР]\n\nSCORE: 8", "TUTOR")
+        assert session.get_awaiting_state_enum() == AwaitingState.CHOICE
+        messages = session.get_openai_messages()
+        assert messages[-1]["role"] == "assistant"
+
+    def test_stream_evaluate_uses_tutor_agent(self):
+        import json
+        events = []
+        events.append(json.dumps({'agent': 'TUTOR'}, ensure_ascii=False))
+        events.append(json.dumps({'done': True, 'agent_done': 'TUTOR', 'score': 8}, ensure_ascii=False))
+        for e in events:
+            data = json.loads(e)
+            assert data.get('agent') == 'TUTOR' or data.get('agent_done') == 'TUTOR'

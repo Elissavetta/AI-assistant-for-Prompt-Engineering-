@@ -1,4 +1,6 @@
 import enum
+import logging
+import re
 import time
 
 from app.config import (
@@ -12,6 +14,8 @@ from app.config import (
 )
 from app.models.user import User, UserProfile, ModuleProgress
 from app.services.scoring_service import MODULE_ORDER
+
+logger = logging.getLogger("prompt_trainer")
 
 
 class AwaitingState(enum.Enum):
@@ -70,6 +74,17 @@ class UserSession:
             self._awaiting_state = AwaitingState.ANSWER
         elif MARKER_AWAITING_CHOICE in last_message:
             self._awaiting_state = AwaitingState.CHOICE
+        elif re.search(r'\[ОЖИДАЕТ', last_message):
+            logger.warning("Truncated marker detected in response")
+            lower = last_message.lower()
+            if any(kw in lower for kw in ["задани", "напиши", "промпт", "попробуй", "составь"]):
+                self._awaiting_state = AwaitingState.ANSWER
+            elif any(kw in lower for kw in ["продолжим", "хочешь", "переходим", "дальше", "ещё", "следующ"]):
+                self._awaiting_state = AwaitingState.CHOICE
+            elif any(kw in lower for kw in ["уточни", "какой", "какая", "какие", "сколько"]):
+                self._awaiting_state = AwaitingState.CLARIFICATION
+            else:
+                self._awaiting_state = AwaitingState.CHOICE
         else:
             if any(kw in last_message for kw in ["🎯 **Задание:**", "🎯**Задание:**", "Задание:**"]):
                 if "SCORE:" not in last_message:
@@ -113,7 +128,8 @@ class UserSession:
 
     def get_active_module(self) -> int:
         if self._current_module_id is not None:
-            return self._current_module_id
+            if not self.is_module_completed(self._current_module_id):
+                return self._current_module_id
         return self.get_next_module()
 
     def has_profiler_level(self) -> bool:
@@ -146,6 +162,8 @@ def load_session(user: User, profile: UserProfile, modules: dict[int, ModuleProg
         session.user = user
         session.profile = profile
         session.modules = modules
+        if profile.current_module_id is not None:
+            session._current_module_id = profile.current_module_id
         return session
     session = UserSession(user, profile, modules)
     _sessions[user.id] = session
