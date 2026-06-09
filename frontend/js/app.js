@@ -471,7 +471,7 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
 
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message message-assistant';
-        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="skeleton-bubble"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div></div>`;
+        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="skeleton-bubble"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><span class="skeleton-label">Думает...</span></div></div></div>`;
         messages.appendChild(msgDiv);
         scrollToBottom();
         return msgDiv;

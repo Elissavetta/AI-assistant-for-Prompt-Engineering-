@@ -1,24 +1,17 @@
 services:
   app:
     build: .
-    ports:
-      - "8000:8000"
+    network_mode: host
+    env_file:
+      - .env
     environment:
-      - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-DeepSeek-V4-Pro}
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.ai.beeline.ru/api/v3}
-      - LLM_SSL_VERIFY=${LLM_SSL_VERIFY:-false}
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///prompt_trainer.db}
-    depends_on:
-      - redis
+      - REDIS_URL=redis://localhost:6379/0
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    expose:
-      - "6379"
+    ports:
+      - "6379:6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped

@@ -25,10 +25,15 @@ async def get_llm_client() -> AsyncOpenAI:
     async with _client_lock:
         if _client is not None:
             return _client
+        verify = _build_verify()
+        logger.info(
+            "Creating LLM client: base_url=%s, verify=%s, api_key=%s...",
+            settings.LLM_BASE_URL, verify, settings.LLM_API_KEY[:8] + "..." if settings.LLM_API_KEY else "EMPTY",
+        )
         _client = AsyncOpenAI(
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL,
-            http_client=httpx.AsyncClient(verify=_build_verify(), timeout=60.0),
+            http_client=httpx.AsyncClient(verify=verify, timeout=60.0),
         )
         return _client
 
@@ -60,7 +65,10 @@ async def call_llm(
                 return reasoning
             return ""
         except Exception as e:
-            logger.warning("LLM call attempt %d/%d failed: %s", attempt, settings.LLM_RETRY_ATTEMPTS, e)
+            logger.warning(
+                "LLM call attempt %d/%d failed: %s | base_url=%s model=%s",
+                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, settings.LLM_MODEL,
+            )
             if attempt == settings.LLM_RETRY_ATTEMPTS:
                 raise
             backoff = settings.LLM_RETRY_BACKOFF * (2 ** (attempt - 1))
@@ -88,7 +96,10 @@ async def stream_llm(
             )
             break
         except Exception as e:
-            logger.warning("LLM stream attempt %d/%d failed: %s", attempt, settings.LLM_RETRY_ATTEMPTS, e)
+            logger.warning(
+                "LLM stream attempt %d/%d failed: %s | base_url=%s model=%s",
+                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, settings.LLM_MODEL,
+            )
             if attempt == settings.LLM_RETRY_ATTEMPTS:
                 raise
             backoff = settings.LLM_RETRY_BACKOFF * (2 ** (attempt - 1))
