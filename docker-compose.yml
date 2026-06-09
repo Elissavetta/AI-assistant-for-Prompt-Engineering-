@@ -1,17 +1,22 @@
 services:
   app:
     build: .
-    network_mode: host
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     environment:
-      - REDIS_URL=redis://localhost:6379/0
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped
