@@ -16,7 +16,7 @@ from app.agents.orchestrator import determine_agent
 from app.agents.profiler import force_profile_completion, update_user_from_profile
 from app.agents.evaluator import evaluate_and_score, stream_evaluate
 from app.agents.tutor import build_user_context, get_agent_config
-from app.agents.llm_client import stream_llm, call_llm
+from app.agents.llm_client import stream_llm, call_llm, get_profiler_llm_client
 from app.services.prompt_up_service import (
     save_eval_result,
     reset_clarification,
@@ -91,7 +91,12 @@ async def _call_agent(agent_name: str, session, db):
     user_context = _build_tutor_context(session)
     system_prompt, temperature, max_tokens = get_agent_config(agent_name, user_context)
     openai_messages = session.get_openai_messages()
-    response = await call_llm(system_prompt, openai_messages, temperature, max_tokens)
+    llm_kwargs = {}
+    if agent_name == "PROFILER":
+        from app.config import settings as s
+        llm_kwargs["client"] = await get_profiler_llm_client()
+        llm_kwargs["model"] = s.PROFILER_LLM_MODEL or None
+    response = await call_llm(system_prompt, openai_messages, temperature, max_tokens, **llm_kwargs)
     session.add_assistant_message(response, agent_name)
     update_user_from_profile(session, response, agent_name)
     await run_in_thread(db.commit)
@@ -116,11 +121,16 @@ async def _stream_agent(agent_name: str, session, db):
     user_context = _build_tutor_context(session)
     system_prompt, temperature, max_tokens = get_agent_config(agent_name, user_context)
     openai_messages = session.get_openai_messages()
+    stream_kwargs = {}
+    if agent_name == "PROFILER":
+        from app.config import settings as s
+        stream_kwargs["client"] = await get_profiler_llm_client()
+        stream_kwargs["model"] = s.PROFILER_LLM_MODEL or None
 
     async def generate():
         full_response = []
         yield f"data: {json.dumps({'agent': agent_name}, ensure_ascii=False)}\n\n"
-        async for token in stream_llm(system_prompt, openai_messages, temperature, max_tokens):
+        async for token in stream_llm(system_prompt, openai_messages, temperature, max_tokens, **stream_kwargs):
             full_response.append(token)
             yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
         response_text = "".join(full_response)

@@ -368,7 +368,7 @@ class TestModeSwitching:
 
         captured_systems = []
 
-        async def _side_effect(system, messages, temp, tokens):
+        async def _side_effect(system, messages, temp, tokens, **kwargs):
             captured_systems.append(system)
             if len(captured_systems) == 1:
                 return PROFILER_DONE
@@ -676,7 +676,7 @@ class TestEducationPromptUpIntegration:
         captured_systems = []
         call_count = 0
 
-        async def _capture_call(system, messages, temp, tokens):
+        async def _capture_call(system, messages, temp, tokens, **kwargs):
             nonlocal call_count
             captured_systems.append(system)
             call_count += 1
@@ -989,7 +989,7 @@ class TestEducationPromptUpIntegration:
         responses = [PROFILER_DONE, TUTOR_LESSON, PU_RESP, TUTOR_CONT]
         captured_msg_counts = []
 
-        async def _capture_call(system, messages, temp, tokens):
+        async def _capture_call(system, messages, temp, tokens, **kwargs):
             captured_msg_counts.append(len(messages))
             idx = min(len(captured_msg_counts) - 1, len(responses) - 1)
             return responses[idx]

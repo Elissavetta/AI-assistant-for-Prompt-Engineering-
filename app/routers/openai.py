@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.agents.evaluator import evaluate_and_score, extract_score
-from app.agents.llm_client import call_llm, stream_llm
+from app.agents.llm_client import call_llm, stream_llm, get_profiler_llm_client
 from app.agents.tutor import build_user_context, get_agent_config
 from app.agents.orchestrator import determine_agent
 from app.agents.profiler import update_user_from_profile
@@ -183,7 +183,11 @@ async def _run_education(session, db):
     if agent == "PROFILER":
         user_context = build_user_context(session)
         system, temp, tokens = get_agent_config("PROFILER", user_context)
-        response = await call_llm(system, session.get_openai_messages(), temp, tokens)
+        profiler_kwargs = {}
+        from app.config import settings as s
+        profiler_kwargs["client"] = await get_profiler_llm_client()
+        profiler_kwargs["model"] = s.PROFILER_LLM_MODEL or None
+        response = await call_llm(system, session.get_openai_messages(), temp, tokens, **profiler_kwargs)
         session.add_assistant_message(response, "PROFILER")
         update_user_from_profile(session, response, "PROFILER")
         if session.user:
@@ -243,9 +247,15 @@ async def _stream_education(session, db, model: str):
     user_context = build_user_context(session)
     system, temp, tokens = get_agent_config(agent, user_context)
 
+    stream_kwargs = {}
+    if agent == "PROFILER":
+        from app.config import settings as s
+        stream_kwargs["client"] = await get_profiler_llm_client()
+        stream_kwargs["model"] = s.PROFILER_LLM_MODEL or None
+
     yield _make_chunk({"role": "assistant", "content": ""}, conversation_id, model)
     full_response = []
-    async for token in stream_llm(system, session.get_openai_messages(), temp, tokens):
+    async for token in stream_llm(system, session.get_openai_messages(), temp, tokens, **stream_kwargs):
         full_response.append(token)
         yield _make_chunk({"content": token}, conversation_id, model)
     response_text = "".join(full_response)

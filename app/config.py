@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     LLM_SSL_VERIFY: bool = True
     LLM_CERT_PATH: str = ""
     LLM_MAX_TOKENS: int = 600
+    PROFILER_LLM_API_KEY: str = ""
+    PROFILER_LLM_MODEL: str = "Qwen3.5-35B-A3B"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     LLM_RETRY_ATTEMPTS: int = 3

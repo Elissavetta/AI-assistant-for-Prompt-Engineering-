@@ -11,6 +11,9 @@ logger = logging.getLogger("prompt_trainer")
 _client: AsyncOpenAI | None = None
 _client_lock = asyncio.Lock()
 
+_profiler_client: AsyncOpenAI | None = None
+_profiler_client_lock = asyncio.Lock()
+
 
 def _build_verify() -> str | bool:
     if settings.LLM_CERT_PATH:
@@ -38,19 +41,50 @@ async def get_llm_client() -> AsyncOpenAI:
         return _client
 
 
+async def get_profiler_llm_client() -> AsyncOpenAI:
+    global _profiler_client
+    if _profiler_client is not None:
+        return _profiler_client
+    async with _profiler_client_lock:
+        if _profiler_client is not None:
+            return _profiler_client
+        if not settings.PROFILER_LLM_API_KEY:
+            logger.warning(
+                "PROFILER_LLM_API_KEY is empty, falling back to main LLM client for profiler"
+            )
+            _profiler_client = await get_llm_client()
+            return _profiler_client
+        verify = _build_verify()
+        logger.info(
+            "Creating profiler LLM client: base_url=%s, verify=%s, api_key=%s..., model=%s",
+            settings.LLM_BASE_URL, verify,
+            settings.PROFILER_LLM_API_KEY[:8] + "...",
+            settings.PROFILER_LLM_MODEL,
+        )
+        _profiler_client = AsyncOpenAI(
+            api_key=settings.PROFILER_LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
+            http_client=httpx.AsyncClient(verify=verify, timeout=30.0),
+        )
+        return _profiler_client
+
+
 async def call_llm(
     system_prompt: str,
     messages: list[dict],
     temperature: float = 0.7,
     max_tokens: int | None = None,
+    client: AsyncOpenAI | None = None,
+    model: str | None = None,
 ) -> str:
-    client = await get_llm_client()
+    llm_client = client or await get_llm_client()
+    use_model = model or settings.LLM_MODEL
     all_messages = [{"role": "system", "content": system_prompt}] + messages
 
     for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
         try:
-            response = await client.chat.completions.create(
-                model=settings.LLM_MODEL,
+            response = await llm_client.chat.completions.create(
+                model=use_model,
                 messages=all_messages,
                 temperature=temperature,
                 max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
@@ -67,7 +101,7 @@ async def call_llm(
         except Exception as e:
             logger.warning(
                 "LLM call attempt %d/%d failed: %s | base_url=%s model=%s",
-                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, settings.LLM_MODEL,
+                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, use_model,
             )
             if attempt == settings.LLM_RETRY_ATTEMPTS:
                 raise
@@ -80,14 +114,17 @@ async def stream_llm(
     messages: list[dict],
     temperature: float = 0.7,
     max_tokens: int | None = None,
+    client: AsyncOpenAI | None = None,
+    model: str | None = None,
 ):
-    client = await get_llm_client()
+    llm_client = client or await get_llm_client()
+    use_model = model or settings.LLM_MODEL
     all_messages = [{"role": "system", "content": system_prompt}] + messages
 
     for attempt in range(1, settings.LLM_RETRY_ATTEMPTS + 1):
         try:
-            stream = await client.chat.completions.create(
-                model=settings.LLM_MODEL,
+            stream = await llm_client.chat.completions.create(
+                model=use_model,
                 messages=all_messages,
                 temperature=temperature,
                 max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
@@ -98,7 +135,7 @@ async def stream_llm(
         except Exception as e:
             logger.warning(
                 "LLM stream attempt %d/%d failed: %s | base_url=%s model=%s",
-                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, settings.LLM_MODEL,
+                attempt, settings.LLM_RETRY_ATTEMPTS, e, settings.LLM_BASE_URL, use_model,
             )
             if attempt == settings.LLM_RETRY_ATTEMPTS:
                 raise
