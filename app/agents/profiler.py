@@ -37,7 +37,9 @@ def force_profile_completion(session) -> bool:
     return False
 
 
-def update_user_from_profile(session, response: str):
+def update_user_from_profile(session, response: str, agent: str = ""):
+    if agent == "EVALUATOR":
+        return
     if MARKER_LEVEL in response.upper():
         profile_data = parse_profile(response)
         logger.info("Profile parsed: level=%s, sphere=%s, goals=%s", profile_data.get("level"), profile_data.get("sphere"), profile_data.get("goals"))

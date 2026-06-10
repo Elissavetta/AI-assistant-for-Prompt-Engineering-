@@ -1,0 +1,53 @@
+// PROMPT UP — Database Schema
+// Откройте на https://dbdiagram.io для визуализации
+
+Table users {
+  id varchar(36) [pk, default: `uuid4()`]
+  username varchar(255) [unique, not null]
+  email varchar(255) [unique, not null]
+  hashed_password varchar(255) [not null, note: 'bcrypt']
+  is_active boolean [default: true]
+  created_at datetime [default: `now(UTC)`]
+
+  Indexes {
+    username [unique]
+    email [unique]
+  }
+}
+
+Table user_profiles {
+  id varchar(36) [pk, default: `uuid4()`]
+  user_id varchar(36) [unique, not null, ref: > users.id]
+  level varchar(255) [default: ``, note: 'newbie | intermediate | advanced']
+  sphere varchar(255) [default: ``, note: 'сфера деятельности']
+  goals varchar(255) [default: ``, note: 'цели обучения']
+  profiler_done boolean [default: false]
+  tutor_introduced boolean [default: false]
+  current_module_id integer [note: '1–6, nullable']
+  total_score integer [default: 0]
+  created_at datetime [default: `now(UTC)`]
+}
+
+Table module_progress {
+  id varchar(36) [pk, default: `uuid4()`]
+  user_id varchar(36) [not null, ref: > users.id]
+  module_id integer [not null, note: '1–6']
+  score integer [default: 0, note: 'макс. 50 = модуль завершён']
+  count integer [default: 0, note: 'количество попыток']
+
+  Indexes {
+    (user_id, module_id) [unique, name: 'uq_user_module']
+  }
+}
+
+// Вычисляемые поля (не в БД):
+// module_progress.is_completed = score >= 50
+// module_progress.avg = score / count
+
+// Справочник модулей (не таблица, логика в коде):
+// 1 — Структура промпта (newbie)
+// 2 — Улучшение промптов (newbie)
+// 3 — Few-shot prompting (intermediate)
+// 4 — Chain-of-thought (intermediate)
+// 5 — Мастер контекста (intermediate)
+// 6 — Комплексный промпт (advanced)

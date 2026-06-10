@@ -37,6 +37,7 @@ function renderMarkdown(text) {
     html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
     html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
     html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
     html = html.replace(/\n\n/g, '</p><p>');
     html = html.replace(/\n/g, '<br>');
     return html;
@@ -267,6 +268,16 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         }
     }
 
+    function setActiveTab(activeElement) {
+        const navLearning = document.getElementById('nav-learning');
+        const navAssignments = document.getElementById('nav-assignments');
+        const navStats = document.getElementById('nav-stats');
+        if (navLearning) navLearning.classList.remove('active');
+        if (navAssignments) navAssignments.classList.remove('active');
+        if (activeElement === navStats) return;
+        if (activeElement) activeElement.classList.add('active');
+    }
+
     function updateUI(profile, progress) {
         if (!profile) return;
 
@@ -311,7 +322,11 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
                 item.addEventListener('click', () => {
                     const mid = parseInt(item.dataset.moduleId);
                     const mod = MODULE_META.find(m => m.id === mid);
-                    if (mod) sendMessage(`Хочу пройти модуль ${mod.id}`);
+                    if (mod) {
+                        currentMode = 'lesson';
+                        setActiveTab(document.getElementById('nav-learning'));
+                        sendMessage(`Хочу пройти модуль ${mod.id}`);
+                    }
                 });
             });
         }
@@ -471,7 +486,7 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
 
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message message-assistant';
-        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="skeleton-bubble"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><span class="skeleton-label">Думает...</span></div></div></div>`;
+        msgDiv.innerHTML = `<div class="agent-avatar avatar-tutor"><i class="fas fa-chalkboard-user"></i></div><div><div class="agent-label agent-label-tutor">Тьютор</div><div class="message-bubble"><div class="thinking-indicator"><span class="thinking-text">Думает</span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div>`;
         messages.appendChild(msgDiv);
         scrollToBottom();
         return msgDiv;
@@ -499,9 +514,15 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         scrollToBottom();
     }
 
+    let _pendingMessage = null;
+
     // Send message (real API)
     async function sendMessage(text) {
-        if (!text.trim() || isLoading) return;
+        if (!text.trim()) return;
+        if (isLoading) {
+            _pendingMessage = text;
+            return;
+        }
         isLoading = true;
 
         const sendBtn = document.getElementById('send-btn');
@@ -610,6 +631,12 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         isLoading = false;
         sendBtn.disabled = false;
         chatInput.focus();
+
+        if (_pendingMessage) {
+            const pending = _pendingMessage;
+            _pendingMessage = null;
+            sendMessage(pending);
+        }
     }
 
     let _refreshTimer = null;
@@ -653,6 +680,8 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
 
         const startBtn = document.getElementById('start-btn');
         if (startBtn) startBtn.addEventListener('click', () => {
+            currentMode = 'lesson';
+            setActiveTab(document.getElementById('nav-learning'));
             const isReturning = window._lastProfile && window._lastProfile.level && window._lastProfile.level !== '';
             if (isReturning) {
                 const currentModule = (window._lastProgress || []).find(p => !p.completed);
@@ -680,17 +709,14 @@ if (document.getElementById('dashboard-layout') || document.getElementById('chat
         const modal = document.getElementById('stats-modal');
         const closeModal = document.getElementById('stats-modal-close');
 
-        function setActiveTab(activeElement) {
-            if (navLearning) navLearning.classList.remove('active');
-            if (navAssignments) navAssignments.classList.remove('active');
-            if (activeElement === navStats) return;
-            if (activeElement) activeElement.classList.add('active');
-        }
-
         if (navLearning) {
             navLearning.addEventListener('click', (e) => {
                 e.preventDefault();
                 setActiveTab(navLearning);
+                if (currentMode !== 'lesson') {
+                    currentMode = 'lesson';
+                    sendMessage('Хочу перейти в режим обучения. Дай задание текущего модуля.');
+                }
             });
         }
 

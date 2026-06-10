@@ -75,7 +75,10 @@ async def _call_agent(agent_name: str, session, db):
         response, score = await evaluate_and_score(session, db)
         session.add_assistant_message(response, "TUTOR")
         save_eval_result(session, response, score)
-        update_user_from_profile(session, response)
+        module_id = session.get_active_module()
+        session.add_module_score(module_id, score)
+        from app.services.scoring_service import calculate_level
+        session.profile.level = calculate_level(session.profile.total_score)
         await run_in_thread(db.commit)
         return {
             "agent": "TUTOR",
@@ -90,7 +93,7 @@ async def _call_agent(agent_name: str, session, db):
     openai_messages = session.get_openai_messages()
     response = await call_llm(system_prompt, openai_messages, temperature, max_tokens)
     session.add_assistant_message(response, agent_name)
-    update_user_from_profile(session, response)
+    update_user_from_profile(session, response, agent_name)
     await run_in_thread(db.commit)
 
     profiler_result = await _handle_profiler_then_tutor(session, response, db)
@@ -122,7 +125,7 @@ async def _stream_agent(agent_name: str, session, db):
             yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
         response_text = "".join(full_response)
         session.add_assistant_message(response_text, agent_name)
-        update_user_from_profile(session, response_text)
+        update_user_from_profile(session, response_text, agent_name)
         await run_in_thread(db.commit)
 
         if MARKER_LEVEL in response_text.upper():

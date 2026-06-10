@@ -440,6 +440,7 @@ class TestSessionCache:
         modules = get_module_progress_map(db, test_user.id)
         session = _make_session(test_user, profile, modules)
         session.add_user_message("hello")
+        session.add_assistant_message("Привет! Начнём урок.\n[ОЖИДАЕТСЯ ОТВЕТ]\nНапиши свой промпт ниже", "TUTOR")
         assert session.is_returning_user() is True
 
     def test_is_returning_user_false_no_level(self, db, test_user):
@@ -466,6 +467,8 @@ class TestSessionCache:
         session.add_user_message("hello")
         session.add_assistant_message("hi", "TUTOR")
         session.add_user_message("another message")
+        session.add_assistant_message("response", "TUTOR")
+        session.add_user_message("third message")
         assert session.is_returning_user() is False
 
 

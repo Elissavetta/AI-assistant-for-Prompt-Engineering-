@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.ai.beeline.ru/api/v3"
     LLM_SSL_VERIFY: bool = True
     LLM_CERT_PATH: str = ""
-    LLM_MAX_TOKENS: int = 800
+    LLM_MAX_TOKENS: int = 600
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     LLM_RETRY_ATTEMPTS: int = 3

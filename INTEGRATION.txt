@@ -1,0 +1,545 @@
+================================================================================
+  PROMPT UP — ИНСТРУКЦИЯ ПО ИНТЕГРАЦИИ
+================================================================================
+
+
+СОДЕРЖАНИЕ
+----------
+ 1. Обзор архитектуры
+ 2. Быстрый старт (SQLite + in-memory сессии)
+ 3. Переключение на Redis
+ 4. Переключение на MSSQL
+ 5. Запуск через Docker Compose
+ 6. Интеграция через OpenAI-совместимый API
+ 7. Интеграция через веб-чат API
+ 8. Полная таблица переменных окружения
+ 9. Устранение неполадок
+
+
+================================================================================
+ 1. ОБЗОР АРХИТЕКТУРЫ
+================================================================================
+
+Компоненты:
+  - FastAPI-приложение (порт 8000)
+  - SQLAlchemy ORM (SQLite по умолчанию, MSSQL опционально)
+  - Сессии: in-memory по умолчанию, Redis опционально
+  - LLM-провайдер: OpenAI-совместимый API (Beeline AI / DeepSeek-V4-Pro)
+  - Фронтенд: статический HTML/JS, раздаётся тем же сервером
+
+Режимы работы:
+  - Обучение (education/lesson) — курсы из 6 модулей, оценки, прогресс
+  - Prompt Up — свободная практика улучшения промптов, без авторизации
+
+API-интерфейсы:
+  - /v1/chat/completions  — OpenAI-совместимый API (для внешних клиентов)
+  - /api/chat/message     — Веб-чат API (для встроенного фронтенда)
+
+
+================================================================================
+ 2. БЫСТРЫЙ СТАРТ (SQLite + in-memory сессии)
+================================================================================
+
+Требования:
+  - Python 3.12+
+  - Пустой файл .env с обязательным SECRET_KEY
+
+Шаги:
+
+  1) Клонируйте репозиторий:
+     git clone <repo-url>
+     cd ai-prompt-trainer
+
+  2) Создайте виртуальное окружение:
+     python -m venv venv
+     venv\Scripts\activate        # Windows
+     source venv/bin/activate     # Linux/Mac
+
+  3) Установите зависимости:
+     pip install -r requirements.txt
+
+  4) Создайте файл .env (минимальный):
+     ---
+     SECRET_KEY=ваш-секретный-ключ-минимум-32-символа
+     LLM_API_KEY=ваш-api-ключ-beeline
+     LLM_MODEL=DeepSeek-V4-Pro
+     LLM_BASE_URL=https://api.ai.beeline.ru/api/v3
+     LLM_SSL_VERIFY=false
+     LLM_MAX_TOKENS=600
+     ---
+
+  5) Запустите сервер:
+     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  6) Откройте в браузере:
+     http://localhost:8000/dashboard
+
+  Готово! Приложение использует:
+  - SQLite: prompt_trainer.db (автосоздание)
+  - In-memory: сессии хранятся в памяти процесса (TTL 30 мин)
+
+
+================================================================================
+ 3. ПЕРЕКЛЮЧЕНИЕ НА REDIS
+================================================================================
+
+Зачем: В продакшене in-memory сессии теряются при перезапуске приложения
+и не шарятся между воркерами. Redis решает обе проблемы.
+
+Что заменить:
+  Только одну переменную в .env:
+
+  БЫЛО:
+    REDIS_URL=
+
+  СТАЛО:
+    REDIS_URL=redis://localhost:6379/0
+
+Как это работает внутри (app/services/session_cache.py):
+  - Если REDIS_URL непустой → используется RedisSessionStore
+  - Если REDIS_URL пустой   → используется MemorySessionStore
+  - Если Redis недоступен   → автопереключение на MemorySessionStore с warning
+
+Ключи Redis:
+  session:{user_id}               — сессия авторизованного пользователя
+  api_session:{conversation_id}    — сессия анонимного API-клиента
+
+TTL: 1800 секунд (30 минут), задаётся SESSION_TTL_SECONDS в config.py
+
+Установка Redis:
+  - Windows: https://github.com/tporadowski/redis/releases
+  - Linux:   sudo apt install redis-server
+  - Mac:     brew install redis
+  - Docker:  docker run -d -p 6379:6379 redis:7-alpine
+
+Проверка:
+  redis-cli ping  →  PONG
+
+
+================================================================================
+ 4. ПЕРЕКЛЮЧЕНИЕ НА MSSQL
+================================================================================
+
+Зачем: SQLite не поддерживает параллельные записи и не подходит для
+многопользовательского продакшена. MSSQL — корпоративный стандарт.
+
+Что заменить:
+  Одну переменную в .env:
+
+  БЫЛО:
+    DATABASE_URL=sqlite:///prompt_trainer.db
+
+  СТАЛО:
+    DATABASE_URL=mssql+pyodbc://sa:YourStrong!Passw0rd@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+
+ВАЖНО: Нужен установленный ODBC Driver 18 for SQL Server:
+  - Windows: скачать с https://learn.microsoft.com/sql/connect/odbc/
+  - Linux:   см. Dockerfile — там есть инструкции по установке msodbcsql18
+  - Docker:  уже включён в образ (Dockerfile устанавливает msodbcsql18)
+
+Как это работает внутри (app/database.py):
+  - URL начинается с "sqlite"   → connect_args: {check_same_thread: False}
+  - URL содержит "mssql/pyodbc" → добавляется TrustServerCertificate=yes,
+                                    pool_size=10, max_overflow=20
+  - Иначе                      → pool_size=10, max_overflow=20 (PostgreSQL и т.д.)
+
+Параметры строки подключения:
+  mssql+pyodbc://<user>:<password>@<host>:<port>/<database>?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+
+  Где:
+    <user>       — sa (или другой пользователь MSSQL)
+    <password>   — пароль SA (см. MSSQL_SA_PASSWORD в docker-compose.yml)
+    <host>       — localhost (локально) или mssql (в Docker)
+    <port>       — 1433
+    <database>   — master (или ваша БД)
+    TrustServerCertificate=yes — обязательно для самоподписанных сертификатов
+
+Если MSSQL работает в Docker Compose, используйте хост "mssql":
+  DATABASE_URL=mssql+pyodbc://sa:YourStrong!Passw0rd@mssql:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+
+
+================================================================================
+ 5. ЗАПУСК ЧЕРЕЗ DOCKER COMPOSE
+================================================================================
+
+Docker Compose автоматически поднимает 3 сервиса:
+  - app   — FastAPI приложение (порт 8000)
+  - redis — Redis 7 (порт 6379, внутри сети)
+  - mssql — MS SQL Server 2022 (порт 1433)
+
+Шаги:
+
+  1) Создайте файл .env на основе .env.example:
+
+     SECRET_KEY=ваш-секретный-ключ-минимум-32-символа
+     LLM_API_KEY=ваш-api-ключ-beeline
+     LLM_MODEL=DeepSeek-V4-Pro
+     LLM_BASE_URL=https://api.ai.beeline.ru/api/v3
+     LLM_SSL_VERIFY=false
+     LLM_MAX_TOKENS=600
+     REDIS_URL=redis://redis:6379/0
+     DATABASE_URL=mssql+pyodbc://sa:YourStrong!Passw0rd@mssql:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+     MSSQL_SA_PASSWORD=YourStrong!Passw0rd
+
+  2) Запустите:
+     docker-compose up -d
+
+  3) Проверьте статус:
+     docker-compose ps
+     Все сервисы должны быть "healthy"
+
+  4) Проверьте логи:
+     docker-compose logs -f app
+
+  5) Откройте:
+     http://localhost:8000/dashboard
+
+Порты:
+  8000 — веб-приложение + API
+  1433 — MSSQL (доступен с хоста для SQL Server Management Studio)
+  6379 — Redis (не экспонирован наружу, только внутри сети Docker)
+
+Healthcheck:
+  - app:   curl http://localhost:8000/docs (каждые 30с)
+  - redis: redis-cli ping (каждые 10с)
+  - mssql: sqlcmd SELECT 1 (каждые 15с, start_period 30с)
+
+Остановка:
+  docker-compose down          — остановить, данные сохранятся (volumes)
+  docker-compose down -v       — остановить и УДАЛИТЬ данные
+
+
+================================================================================
+ 6. ИНТЕГРАЦИЯ ЧЕРЕЗ OPENAI-СОВМЕСТИМЫЙ API
+================================================================================
+
+Эндпоинт: POST /v1/chat/completions
+Формат: совместим с OpenAI Chat Completions API
+
+-----------------------------------------------
+ 6.1. Доступные модели
+-----------------------------------------------
+
+  model="prompt-up-mode"
+    - Режим улучшения промптов
+    - Авторизация НЕ требуется
+    - Сессия идентифицируется по conversation_id
+    - Без оценки, без прогресса
+
+  model="education-mode"
+    - Режим обучения с модулями и оценками
+    - Без user_id: анонимная сессия (без прогресса)
+    - С user_id: привязка к аккаунту (требуется JWT-авторизация)
+
+-----------------------------------------------
+ 6.2. Параметры запроса
+-----------------------------------------------
+
+  model          string   "prompt-up-mode" | "education-mode"
+  messages       array    [{role: "user", content: "..."}]
+  stream         boolean  false (default) | true
+  conversation_id string  Опционально. ID сессии. Автогенерация из SHA-256
+                           первого сообщения, если не указан.
+  user_id        string   Опционально. Только для education-mode.
+                           Требует Authorization header.
+  temperature    float    0.6 (переопределяется сервером)
+  max_tokens     int      600 (переопределяется сервером)
+
+-----------------------------------------------
+ 6.3. Авторизация
+-----------------------------------------------
+
+  prompt-up-mode:
+    Не требуется. Полностью анонимный.
+
+  education-mode без user_id:
+    Не требуется. Анонимная сессия.
+
+  education-mode с user_id:
+    Обязателен заголовок:
+      Authorization: Bearer <jwt_token>
+
+    Токен получается через POST /api/auth/login:
+      { "username": "...", "password": "..." }
+      → { "access_token": "...", "token_type": "bearer" }
+
+    Условия:
+      - sub claim токена должен совпадать с user_id
+      - Иначе: 403 Forbidden
+
+-----------------------------------------------
+ 6.4. Пример: Prompt Up (без стриминга)
+-----------------------------------------------
+
+  curl -X POST http://localhost:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "prompt-up-mode",
+      "messages": [{"role": "user", "content": "Напиши рецепт борща"}]
+    }'
+
+  Ответ:
+  {
+    "id": "chatcmpl-a1b2c3d4e5f6",
+    "object": "chat.completion",
+    "created": 1718000000,
+    "model": "prompt-up-mode",
+    "conversation_id": "f6e5d4c3b2a1",
+    "choices": [{
+      "index": 0,
+      "message": {"role": "assistant", "content": "..."},
+      "finish_reason": "stop"
+    }],
+    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+  }
+
+-----------------------------------------------
+ 6.5. Пример: Prompt Up (со стримингом)
+-----------------------------------------------
+
+  curl -X POST http://localhost:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "prompt-up-mode",
+      "messages": [{"role": "user", "content": "Напиши рецепт пельменей"}],
+      "stream": true
+    }'
+
+  Ответ (SSE, text/event-stream):
+    data: {"id":"chatcmpl-...","object":"chat.completion.chunk","model":"prompt-up-mode","conversation_id":"...","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+    data: {"id":"chatcmpl-...","object":"chat.completion.chunk","model":"prompt-up-mode","conversation_id":"...","choices":[{"index":0,"delta":{"content":"Привет"},"finish_reason":null}]}
+
+    data: {"id":"chatcmpl-...","object":"chat.completion.chunk","model":"prompt-up-mode","conversation_id":"...","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+    data:
+
+  Формат чанков:
+    1-й чанк:  delta: {role: "assistant", content: ""}
+    Токены:    delta: {content: "<токен>"}
+    Последний: delta: {}, finish_reason: "stop"
+    Конец:     пустая строка "data:\n"
+
+-----------------------------------------------
+ 6.6. Пример: Education Mode (с авторизацией)
+-----------------------------------------------
+
+  Шаг 1 — регистрация:
+    curl -X POST http://localhost:8000/api/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{"username":"student","email":"s@test.com","password":"pass123"}'
+
+  Шаг 2 — логин:
+    curl -X POST http://localhost:8000/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"username":"student","password":"pass123"}'
+    → {"access_token":"eyJ...","token_type":"bearer"}
+
+  Шаг 3 — чат:
+    curl -X POST http://localhost:8000/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer eyJ..." \
+      -d '{
+        "model": "education-mode",
+        "messages": [{"role": "user", "content": "Привет!"}],
+        "user_id": "1"
+      }'
+
+-----------------------------------------------
+ 6.7. Продолжение диалога (conversation_id)
+-----------------------------------------------
+
+  Для продолжения сессии передайте тот же conversation_id:
+
+    curl -X POST http://localhost:8000/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "prompt-up-mode",
+        "messages": [{"role": "user", "content": "А если добавить чеснок?"}],
+        "conversation_id": "f6e5d4c3b2a1"
+      }'
+
+  Если conversation_id не указан, он автоматически вычисляется как
+  SHA-256 от первого пользовательского сообщения.
+
+  TTL сессии: 30 минут неактивности.
+
+
+================================================================================
+ 7. ИНТЕГРАЦИЯ ЧЕРЕЗ ВЕБ-ЧАТ API
+================================================================================
+
+Для встраивания чата в свой фронтенд, отличный от встроенного.
+
+-----------------------------------------------
+ 7.1. Эндпоинты
+-----------------------------------------------
+
+  POST /api/chat/message         — обычный ответ
+  POST /api/chat/message/stream  — стриминг (SSE)
+
+  Оба требуют JWT-авторизацию: Authorization: Bearer <token>
+
+-----------------------------------------------
+ 7.2. Формат запроса
+-----------------------------------------------
+
+  {
+    "message": "Привет!",
+    "mode": "lesson"          // "lesson" или "prompt_up"
+  }
+
+-----------------------------------------------
+ 7.3. Формат ответа (без стриминга)
+-----------------------------------------------
+
+  Обычный агент (TUTOR/PROFILER):
+  {
+    "agent": "TUTOR",
+    "response": "Привет! Начнём...",
+    "score": null,
+    "points": 0,
+    "total_score": 0
+  }
+
+  Оценка (EVALUATOR):
+  {
+    "agent": "TUTOR",
+    "response": "Оценка: 7/10...",
+    "score": 7,
+    "points": 7,
+    "total_score": 7
+  }
+
+  Профайлер + Тьютор (двойной ответ):
+  {
+    "agent": "PROFILER_THEN_TUTOR",
+    "messages": [
+      {"agent": "PROFILER", "response": "..."},
+      {"agent": "TUTOR", "response": "..."}
+    ],
+    "score": null,
+    "points": 0,
+    "total_score": 0
+  }
+
+-----------------------------------------------
+ 7.4. Формат стриминга (SSE)
+-----------------------------------------------
+
+  Content-Type: text/event-stream
+  Каждый чанк: data: {json}\n\n
+
+  Обычный агент:
+    data: {"agent": "TUTOR"}
+    data: {"token": "Привет"}
+    data: {"token": "!"}
+    data: {"done": true, "score": null, "points": 0, "total_score": 0}
+
+  Профайлер → Тьютор (два агента подряд):
+    data: {"agent": "PROFILER"}
+    data: {"token": "..."}
+    data: {"done": true, "agent_done": "PROFILER", "score": null, "points": 0, "total_score": 0}
+    data: {"agent": "TUTOR"}
+    data: {"token": "..."}
+    data: {"done": true, "agent_done": "TUTOR", "score": null, "points": 0, "total_score": 0}
+
+  Оценка:
+    data: {"agent": "TUTOR"}
+    data: {"token": "..."}
+    data: {"done": true, "score": 7, "points": 7, "total_score": 7}
+
+  При получении очков (>0) можно показать уведомление:
+    if (data.done && data.points > 0) { showScoreNotification(data.points, data.total_score); }
+
+
+================================================================================
+ 8. ПОЛНАЯ ТАБЛИЦА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
+================================================================================
+
+Переменная                   Тип      По умолчанию             Описание
+---------------------------------------------------------------------------
+SECRET_KEY                   string   (ОБЯЗАТЕЛЬНО)           JWT-ключ, мин. 32 символа
+LLM_API_KEY                  string   ""                      API-ключ LLM-провайдера
+LLM_MODEL                    string   "DeepSeek-V4-Pro"       Модель LLM
+LLM_BASE_URL                 string   "https://api.ai.beeline.ru/api/v3"  URL LLM API
+LLM_SSL_VERIFY               bool     true                    Проверка SSL сертификата
+LLM_CERT_PATH                string   ""                      Путь к кастомному SSL-сертификату
+LLM_MAX_TOKENS               int      600                     Макс. токенов в ответе LLM
+LLM_RETRY_ATTEMPTS           int      3                       Кол-во попыток при ошибке LLM
+LLM_RETRY_BACKOFF            float    1.0                     Множитель задержки между попытками
+DATABASE_URL                 string   "sqlite:///..."         Строка подключения к БД
+REDIS_URL                    string   ""                      URL Redis (пусто = in-memory)
+MSSQL_SA_PASSWORD            string   "YourStrong!Passw0rd"   Пароль SA для MSSQL (Docker)
+CORS_ORIGINS                 string   ""                      Разрешённые CORS-домены (через запятую, пусто = все)
+RATE_LIMIT_PER_MINUTE        int      20                      Лимит запросов в минуту
+DB_POOL_SIZE                 int      10                      Размер пула подключений (не SQLite)
+DB_MAX_OVERFLOW              int      20                      Макс. переполнение пула (не SQLite)
+ALGORITHM                    string   "HS256"                 Алгоритм JWT
+ACCESS_TOKEN_EXPIRE_MINUTES  int      1440                    Время жизни JWT (24 часа)
+
+
+================================================================================
+ 9. УСТРАНЕНИЕ НЕПОЛАДОК
+================================================================================
+
+-----------------------------------------------
+"SECRET_KEY must be set"
+-----------------------------------------------
+  Причина: .env не создан или SECRET_KEY пустой
+  Решение: создайте .env с SECRET_KEY=<случайная строка 32+ символов>
+
+-----------------------------------------------
+"NameError: name 'AwaitingState' is not defined"
+-----------------------------------------------
+  Причина: старый кэш Python
+  Решение: удалите __pycache__ и перезапустите:
+    find . -name __pycache__ -exec rm -rf {} +
+    uvicorn app.main:app --reload
+
+-----------------------------------------------
+Redis не подключается
+-----------------------------------------------
+  Проверки:
+    1. redis-cli ping → PONG
+    2. REDIS_URL в .env правильный: redis://localhost:6379/0
+    3. В Docker: redis://redis:6379/0 (имя сервиса)
+  Автопереключение: если Redis недоступен, приложение переключится
+  на in-memory с warning в логах
+
+-----------------------------------------------
+MSSQL не подключается
+-----------------------------------------------
+  Проверки:
+    1. ODBC Driver 18 установлен
+    2. TrustServerCertificate=yes в строке подключения
+    3. В Docker: хост "mssql" (не "localhost")
+    4. Пароль совпадает с MSSQL_SA_PASSWORD
+    5. Порт 1433 открыт: telnet localhost 1433
+
+-----------------------------------------------
+LLM отвечает медленно
+-----------------------------------------------
+  Оптимизации:
+    1. Уменьшите LLM_MAX_TOKENS (600 по умолчанию)
+    2. Включите stream=true для постепенного вывода
+    3. Проверьте LLM_BASE_URL — убедитесь, что URL корректный
+    4. LLM_SSL_VERIFY=false для локальных прокси
+
+-----------------------------------------------
+CORS ошибки в браузере
+-----------------------------------------------
+  Решение: добавьте домен фронтенда в CORS_ORIGINS:
+    CORS_ORIGINS=http://localhost:3000,https://myapp.example.com
+
+-----------------------------------------------
+429 Rate Limit Exceeded
+-----------------------------------------------
+  Причина: более RATE_LIMIT_PER_MINUTE запросов в минуту
+  Решение: увеличьте RATE_LIMIT_PER_MINUTE в .env
+
+-----------------------------------------------
+Сессия теряется при перезапуске
+-----------------------------------------------
+  Причина: in-memory сессии (REDIS_URL пустой)
+  Решение: настройте Redis (см. раздел 3)

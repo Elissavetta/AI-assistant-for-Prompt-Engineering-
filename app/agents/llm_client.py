@@ -33,7 +33,7 @@ async def get_llm_client() -> AsyncOpenAI:
         _client = AsyncOpenAI(
             api_key=settings.LLM_API_KEY,
             base_url=settings.LLM_BASE_URL,
-            http_client=httpx.AsyncClient(verify=verify, timeout=60.0),
+            http_client=httpx.AsyncClient(verify=verify, timeout=30.0),
         )
         return _client
 

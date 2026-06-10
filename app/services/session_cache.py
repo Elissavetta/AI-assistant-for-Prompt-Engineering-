@@ -272,11 +272,14 @@ class UserSession:
         return self.profile.level != ""
 
     def is_returning_user(self) -> bool:
-        return (
-            self.profile.tutor_introduced
-            and self.profile.level != ""
-            and sum(1 for m in self.conversation if m.get("role") == "user") == 1
+        if not self.profile.tutor_introduced or not self.profile.level:
+            return False
+        has_tutor_msg = any(
+            m.get("role") == "assistant" and m.get("agent") == "TUTOR"
+            for m in self.conversation
         )
+        user_msg_count = sum(1 for m in self.conversation if m.get("role") == "user")
+        return has_tutor_msg and user_msg_count <= 2
 
 
 # --- High-level async helpers ---

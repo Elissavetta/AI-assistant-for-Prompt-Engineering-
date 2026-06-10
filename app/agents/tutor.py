@@ -2,6 +2,7 @@ import logging
 
 from app.config import MARKER_LEVEL
 from app.services.scoring_service import MODULE_NAMES, MODULE_ORDER
+from app.services.session_cache import AwaitingState
 
 logger = logging.getLogger("prompt_trainer")
 
@@ -14,6 +15,11 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
         ctx = "Режим: prompt_up\n\nВАЖНО: Этот режим ПОЛНОСТЬЮ независим от профиля пользователя. НЕ используй данные о сфере, уровне, целях из предыдущих сообщений. Анализируй ТОЛЬКО сам промпт без привязки к профессии."
         if getattr(session, '_is_api', False):
             ctx += "\n\nSKIP_INTRO: да"
+        state = session.get_awaiting_state_enum()
+        if state == AwaitingState.NONE and not session._last_eval_context:
+            ctx += "\n\nЭТО ПЕРВЫЙ АНАЛИЗ ПРОМПТА: СНАЧАЛА задай 1-3 уточняющих вопроса (роль? контекст? формат? ограничения? цель?). Заканчивай [ОЖИДАЕТСЯ УТОЧНЕНИЕ]. НЕ давай улучшенную версию промпта сразу."
+        elif state == AwaitingState.CLARIFICATION:
+            ctx += "\n\nПользователь ответил на уточняющие вопросы. Если ответов достаточно — дай улучшенную версию. Если нет — задай ещё вопросы (максимум 2 раунда)."
     else:
         ctx = f"Уровень: {profile.level}, Сфера: {profile.sphere or 'общая'}, Цели: {profile.goals or 'освоить промпт-инжиниринг'}"
         current_module = module_id or session.get_active_module()
@@ -38,6 +44,10 @@ def build_user_context(session, eval_context: str = "", score: int | None = None
         if session.is_returning_user():
             ctx += "\n\nRETURNING_USER: да"
 
+        last_user_msg = session.conversation[-1].get("content", "") if session.conversation else ""
+        if any(kw in last_user_msg.lower() for kw in ["режим обучения", "вернуться к обучению", "вернуться к урокам", "перейти в режим обучения"]):
+            ctx += "\n\nПользователь переключился в режим обучения. Дай задание текущего модуля. НЕ продолжай прошлую тему из Prompt Up."
+
     if eval_context:
         ctx += f"\n\nРЕЗУЛЬТАТ ОЦЕНКИ:\n{eval_context}"
 
@@ -55,4 +65,4 @@ def get_agent_config(agent_name: str, user_context: str = "") -> tuple[str, floa
     system = TUTOR_SYSTEM_PROMPT
     if user_context:
         system += f"\n\nДАННЫЕ ПОЛЬЗОВАТЕЛЯ: {user_context}"
-    return system, 0.6, 800
+    return system, 0.6, 600

@@ -127,7 +127,8 @@ async def _run_prompt_up(session):
 
     if needs_first_analysis(session):
         reset_clarification(session)
-        return await _build_tutor_response(session)
+        suffix = "\n\nИНСТРУКЦИЯ: Пользователь впервые прислал промпт. СНАЧАЛА задай 1-3 уточняющих вопроса (чего не хватает? какая цель? какой формат?), заканчивай [ОЖИДАЕТСЯ УТОЧНЕНИЕ]. НЕ давай улучшенную версию промпта сразу."
+        return await _build_tutor_response(session, suffix)
 
     return await _build_tutor_response(session)
 
@@ -163,7 +164,8 @@ async def _stream_prompt_up(session, model: str):
 
     if needs_first_analysis(session):
         reset_clarification(session)
-        async for chunk in _stream_tutor_response(session, conversation_id, model):
+        suffix = "\n\nИНСТРУКЦИЯ: Пользователь впервые прислал промпт. СНАЧАЛА задай 1-3 уточняющих вопроса (чего не хватает? какая цель? какой формат?), заканчивай [ОЖИДАЕТСЯ УТОЧНЕНИЕ]. НЕ давай улучшенную версию промпта сразу."
+        async for chunk in _stream_tutor_response(session, conversation_id, model, suffix):
             yield chunk
         await save_api_session(session)
         return
@@ -183,7 +185,7 @@ async def _run_education(session, db):
         system, temp, tokens = get_agent_config("PROFILER", user_context)
         response = await call_llm(system, session.get_openai_messages(), temp, tokens)
         session.add_assistant_message(response, "PROFILER")
-        update_user_from_profile(session, response)
+        update_user_from_profile(session, response, "PROFILER")
         if session.user:
             await run_in_thread(db.commit)
         return response
@@ -203,7 +205,7 @@ async def _run_education(session, db):
     system, temp, tokens = get_agent_config("TUTOR", user_context)
     response = await call_llm(system, session.get_openai_messages(), temp, tokens)
     session.add_assistant_message(response, "TUTOR")
-    update_user_from_profile(session, response)
+    update_user_from_profile(session, response, "TUTOR")
     if session.user:
         await run_in_thread(db.commit)
     return response
@@ -248,7 +250,7 @@ async def _stream_education(session, db, model: str):
         yield _make_chunk({"content": token}, conversation_id, model)
     response_text = "".join(full_response)
     session.add_assistant_message(response_text, agent)
-    update_user_from_profile(session, response)
+    update_user_from_profile(session, response_text, agent)
     if session.user:
         await run_in_thread(db.commit)
 
@@ -287,8 +289,6 @@ async def chat_completions(
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
 ):
     model = request.model
-    if model == "prompt-up":
-        model = "prompt-up-mode"
 
     if model == "prompt-up-mode":
         cid = request.conversation_id or _derive_conversation_id(request.messages)

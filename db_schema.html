@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROMPT UP — Схема базы данных</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0f1117;color:#e0e0e0;padding:40px 20px;min-height:100vh}
+h1{text-align:center;font-size:28px;margin-bottom:8px;background:linear-gradient(135deg,#ffc800,#ff8c00);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{text-align:center;color:#888;font-size:14px;margin-bottom:40px}
+.schema-container{display:flex;justify-content:center;gap:60px;flex-wrap:wrap;position:relative;max-width:1400px;margin:0 auto 60px}
+.table-card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:16px;min-width:380px;max-width:440px;box-shadow:0 8px 32px rgba(0,0,0,0.3);overflow:hidden;transition:transform 0.2s}
+.table-card:hover{transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,0.4)}
+.table-header{padding:20px 24px;font-size:18px;font-weight:700;letter-spacing:0.5px;border-bottom:1px solid #2a2d3a}
+.table-header.users{background:linear-gradient(135deg,rgba(59,130,246,0.15),rgba(59,130,246,0.05));color:#60a5fa}
+.table-header.profiles{background:linear-gradient(135deg,rgba(168,85,247,0.15),rgba(168,85,247,0.05));color:#c084fc}
+.table-header.progress{background:linear-gradient(135deg,rgba(34,197,94,0.15),rgba(34,197,94,0.05));color:#4ade80}
+.table-body{padding:0}
+.col-row{display:grid;grid-template-columns:120px 90px 50px 1fr;padding:10px 24px;border-bottom:1px solid #1e2130;font-size:13px;align-items:center;transition:background 0.15s}
+.col-row:last-child{border-bottom:none}
+.col-row:hover{background:rgba(255,255,255,0.03)}
+.col-name{font-weight:600;font-family:'Fira Code',monospace;font-size:12.5px}
+.col-type{color:#888;font-family:'Fira Code',monospace;font-size:11.5px}
+.col-key{text-align:center;font-size:10px;font-weight:700;border-radius:4px;padding:2px 6px;width:fit-content}
+.pk{background:rgba(59,130,246,0.2);color:#60a5fa}
+.fk{background:rgba(34,197,94,0.2);color:#4ade80}
+.uk{background:rgba(168,85,247,0.2);color:#c084fc}
+.col-desc{color:#666;font-size:11.5px;padding-left:8px}
+.badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:3px;margin-left:4px;font-weight:600}
+.badge-nn{background:rgba(239,68,68,0.15);color:#f87171}
+.badge-default{background:rgba(59,130,246,0.15);color:#60a5fa}
+.section-title{font-size:20px;font-weight:700;margin:40px auto 20px;max-width:1400px;padding-left:8px;border-left:3px solid #ffc800}
+.relations{max-width:1400px;margin:0 auto 40px}
+.rel-row{display:grid;grid-template-columns:160px 60px 160px 80px 1fr;padding:12px 20px;background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;margin-bottom:8px;font-size:13px;align-items:center}
+.rel-from,.rel-to{font-weight:600;font-family:'Fira Code',monospace}
+.rel-type{text-align:center;font-weight:700;color:#ffc800;font-size:15px}
+.rel-via{color:#4ade80;font-family:'Fira Code',monospace;font-size:12px}
+.rel-desc{color:#888;font-size:12px}
+.constraints{max-width:1400px;margin:0 auto 40px}
+.const-row{display:grid;grid-template-columns:160px 200px 160px 1fr;padding:12px 20px;background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;margin-bottom:8px;font-size:13px;align-items:center}
+.const-table{font-weight:600;font-family:'Fira Code',monospace}
+.const-fields{font-family:'Fira Code',monospace;color:#c084fc;font-size:12px}
+.const-name{font-family:'Fira Code',monospace;color:#60a5fa;font-size:12px}
+.computed{max-width:1400px;margin:0 auto 40px}
+.comp-row{display:grid;grid-template-columns:160px 120px 200px 1fr;padding:12px 20px;background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;margin-bottom:8px;font-size:13px;align-items:center}
+.modules{max-width:1400px;margin:0 auto 40px}
+.mod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.mod-card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;text-align:center}
+.mod-id{font-size:24px;font-weight:800;color:#ffc800;margin-bottom:4px}
+.mod-name{font-size:13px;font-weight:600;margin-bottom:6px}
+.mod-level{font-size:11px;padding:3px 10px;border-radius:12px;display:inline-block}
+.mod-level.newbie{background:rgba(59,130,246,0.15);color:#60a5fa}
+.mod-level.intermediate{background:rgba(168,85,247,0.15);color:#c084fc}
+.mod-level.advanced{background:rgba(239,68,68,0.15);color:#f87171}
+.legend{max-width:1400px;margin:0 auto 40px;display:flex;gap:24px;flex-wrap:wrap;justify-content:center}
+.legend-item{display:flex;align-items:center;gap:8px;font-size:13px}
+.legend-dot{width:12px;height:12px;border-radius:3px}
+.legend-dot.pk-dot{background:#3b82f6}
+.legend-dot.fk-dot{background:#22c55e}
+.legend-dot.uk-dot{background:#a855f7}
+svg.connections{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0}
+.table-card{position:relative;z-index:1}
+</style>
+</head>
+<body>
+
+<h1>PROMPT UP — Схема базы данных</h1>
+<p class="subtitle">3 таблицы &middot; 2 связи &middot; SQLite / MSSQL</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot pk-dot"></div> PK — первичный ключ</div>
+  <div class="legend-item"><div class="legend-dot fk-dot"></div> FK — внешний ключ</div>
+  <div class="legend-item"><div class="legend-dot uk-dot"></div> UK — уникальный</div>
+</div>
+
+<div class="schema-container" id="schema">
+
+  <div class="table-card" id="card-users">
+    <div class="table-header users">users</div>
+    <div class="table-body">
+      <div class="col-row" style="background:rgba(59,130,246,0.05)">
+        <span class="col-name">id</span>
+        <span class="col-type">varchar(36)</span>
+        <span class="col-key pk">PK</span>
+        <span class="col-desc">uuid4, авто <span class="badge badge-default">default</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">username</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key uk">UK</span>
+        <span class="col-desc"><span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">email</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key uk">UK</span>
+        <span class="col-desc"><span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">hashed_password</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key"></span>
+        <span class="col-desc">bcrypt <span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">is_active</span>
+        <span class="col-type">boolean</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">default: true</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">created_at</span>
+        <span class="col-type">datetime</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">now(UTC)</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-card" id="card-profiles">
+    <div class="table-header profiles">user_profiles</div>
+    <div class="table-body">
+      <div class="col-row" style="background:rgba(168,85,247,0.05)">
+        <span class="col-name">id</span>
+        <span class="col-type">varchar(36)</span>
+        <span class="col-key pk">PK</span>
+        <span class="col-desc">uuid4, авто <span class="badge badge-default">default</span></span>
+      </div>
+      <div class="col-row" style="background:rgba(34,197,94,0.05)">
+        <span class="col-name">user_id</span>
+        <span class="col-type">varchar(36)</span>
+        <span class="col-key" style="background:linear-gradient(135deg,rgba(34,197,94,0.2),rgba(168,85,247,0.2));color:#a78bfa">FK+UK</span>
+        <span class="col-desc">&rarr; users.id <span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">level</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key"></span>
+        <span class="col-desc">newbie | intermediate | advanced</span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">sphere</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key"></span>
+        <span class="col-desc">сфера деятельности</span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">goals</span>
+        <span class="col-type">varchar(255)</span>
+        <span class="col-key"></span>
+        <span class="col-desc">цели обучения</span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">profiler_done</span>
+        <span class="col-type">boolean</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">default: false</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">tutor_introduced</span>
+        <span class="col-type">boolean</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">default: false</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">current_module_id</span>
+        <span class="col-type">integer</span>
+        <span class="col-key"></span>
+        <span class="col-desc">1–6, nullable</span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">total_score</span>
+        <span class="col-type">integer</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">default: 0</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">created_at</span>
+        <span class="col-type">datetime</span>
+        <span class="col-key"></span>
+        <span class="col-desc"><span class="badge badge-default">now(UTC)</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-card" id="card-progress">
+    <div class="table-header progress">module_progress</div>
+    <div class="table-body">
+      <div class="col-row" style="background:rgba(34,197,94,0.05)">
+        <span class="col-name">id</span>
+        <span class="col-type">varchar(36)</span>
+        <span class="col-key pk">PK</span>
+        <span class="col-desc">uuid4, авто <span class="badge badge-default">default</span></span>
+      </div>
+      <div class="col-row" style="background:rgba(34,197,94,0.08)">
+        <span class="col-name">user_id</span>
+        <span class="col-type">varchar(36)</span>
+        <span class="col-key fk">FK</span>
+        <span class="col-desc">&rarr; users.id <span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">module_id</span>
+        <span class="col-type">integer</span>
+        <span class="col-key"></span>
+        <span class="col-desc">1–6 <span class="badge badge-nn">NOT NULL</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">score</span>
+        <span class="col-type">integer</span>
+        <span class="col-key"></span>
+        <span class="col-desc">макс. 50 = завершён <span class="badge badge-default">default: 0</span></span>
+      </div>
+      <div class="col-row">
+        <span class="col-name">count</span>
+        <span class="col-type">integer</span>
+        <span class="col-key"></span>
+        <span class="col-desc">кол-во попыток <span class="badge badge-default">default: 0</span></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section-title">Связи</div>
+<div class="relations">
+  <div class="rel-row">
+    <span class="rel-from" style="color:#60a5fa">users</span>
+    <span class="rel-type">1:1</span>
+    <span class="rel-to" style="color:#c084fc">user_profiles</span>
+    <span class="rel-via">user_id → id</span>
+    <span class="rel-desc">Один пользователь имеет один профиль</span>
+  </div>
+  <div class="rel-row">
+    <span class="rel-from" style="color:#60a5fa">users</span>
+    <span class="rel-type">1:N</span>
+    <span class="rel-to" style="color:#4ade80">module_progress</span>
+    <span class="rel-via">user_id → id</span>
+    <span class="rel-desc">Один пользователь имеет много записей прогресса</span>
+  </div>
+</div>
+
+<div class="section-title">Уникальные ограничения</div>
+<div class="constraints">
+  <div class="const-row">
+    <span class="const-table">module_progress</span>
+    <span class="const-fields">user_id + module_id</span>
+    <span class="const-name">uq_user_module</span>
+    <span class="col-desc">Один пользователь — одна запись на модуль</span>
+  </div>
+  <div class="const-row">
+    <span class="const-table">users</span>
+    <span class="const-fields">username</span>
+    <span class="const-name">unique</span>
+    <span class="col-desc">Уникальный логин</span>
+  </div>
+  <div class="const-row">
+    <span class="const-table">users</span>
+    <span class="const-fields">email</span>
+    <span class="const-name">unique</span>
+    <span class="col-desc">Уникальный email</span>
+  </div>
+  <div class="const-row">
+    <span class="const-table">user_profiles</span>
+    <span class="const-fields">user_id</span>
+    <span class="const-name">unique</span>
+    <span class="col-desc">Один профиль на пользователя</span>
+  </div>
+</div>
+
+<div class="section-title">Вычисляемые поля (не в БД)</div>
+<div class="computed">
+  <div class="comp-row">
+    <span class="const-table">module_progress</span>
+    <span class="col-name">is_completed</span>
+    <span class="const-fields" style="color:#f87171">score >= 50</span>
+    <span class="col-desc">Модуль пройден</span>
+  </div>
+  <div class="comp-row">
+    <span class="const-table">module_progress</span>
+    <span class="col-name">avg</span>
+    <span class="const-fields" style="color:#f87171">score / count</span>
+    <span class="col-desc">Средний балл за попытку</span>
+  </div>
+</div>
+
+<div class="section-title">Справочник модулей</div>
+<div class="modules">
+  <div class="mod-grid">
+    <div class="mod-card"><div class="mod-id">1</div><div class="mod-name">Структура промпта</div><div class="mod-level newbie">newbie</div></div>
+    <div class="mod-card"><div class="mod-id">2</div><div class="mod-name">Улучшение промптов</div><div class="mod-level newbie">newbie</div></div>
+    <div class="mod-card"><div class="mod-id">3</div><div class="mod-name">Few-shot</div><div class="mod-level intermediate">intermediate</div></div>
+    <div class="mod-card"><div class="mod-id">4</div><div class="mod-name">Chain-of-thought</div><div class="mod-level intermediate">intermediate</div></div>
+    <div class="mod-card"><div class="mod-id">5</div><div class="mod-name">Мастер контекста</div><div class="mod-level intermediate">intermediate</div></div>
+    <div class="mod-card"><div class="mod-id">6</div><div class="mod-name">Комплексный промпт</div><div class="mod-level advanced">advanced</div></div>
+  </div>
+</div>
+
+</body>
+</html>

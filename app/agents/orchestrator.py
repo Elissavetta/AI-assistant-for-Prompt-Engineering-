@@ -4,7 +4,7 @@ from app.config import MIN_SUBMISSION_LENGTH
 from app.services.session_cache import AwaitingState
 
 PROMPT_UP_KEYWORDS = ["prompt up", "promptup", "промпт ап", "режим prompt", "режим prompt up", "свободный режим"]
-MODULE_KEYWORDS = ["хочу пройти модуль", "пройти модуль", "переключи на модуль", "вернуться к урокам", "вернись к урокам", "хочу вернуться к урокам", "научиться писать"]
+MODULE_KEYWORDS = ["хочу пройти модуль", "пройти модуль", "переключи на модуль", "вернуться к урокам", "вернись к урокам", "хочу вернуться к урокам", "научиться писать", "режим обучения", "вернуться к обучению", "перейти в режим обучения"]
 NAV_KEYWORDS = MODULE_KEYWORDS + PROMPT_UP_KEYWORDS
 
 POSITIVE_WORDS = ["да", "хочу", "давай", "ещё", "еще", "конечно", "yes", "next", "дальше"]
@@ -18,9 +18,11 @@ MODULE_ALIASES = {
     "комплексный": 6, "с нуля": 6, "полный промпт": 6,
 }
 
+ANSWER_SUBMISSION_MIN_LENGTH = 10
+
 
 def is_user_submission(user_message: str) -> bool:
-    return len(user_message.strip()) > MIN_SUBMISSION_LENGTH
+    return len(user_message.strip()) >= ANSWER_SUBMISSION_MIN_LENGTH
 
 
 def is_user_wants_more(user_message: str) -> bool:
@@ -56,6 +58,8 @@ def determine_agent(session) -> str:
         mid = extract_module_id(user_message)
         if mid:
             session.set_current_module(mid)
+        if any(kw in user_message.lower() for kw in MODULE_KEYWORDS):
+            session.mode = "lesson"
         return "TUTOR"
 
     state = session.get_awaiting_state_enum()
@@ -66,8 +70,9 @@ def determine_agent(session) -> str:
     if session.mode == "prompt_up" and is_user_submission(user_message):
         return "TUTOR"
 
-    if state == AwaitingState.ANSWER and is_user_submission(user_message):
-        return "EVALUATOR"
+    if state == AwaitingState.ANSWER:
+        if is_user_submission(user_message) or not is_navigation_message(user_message):
+            return "EVALUATOR"
 
     if state == AwaitingState.CHOICE and is_user_wants_more(user_message):
         return "TUTOR"

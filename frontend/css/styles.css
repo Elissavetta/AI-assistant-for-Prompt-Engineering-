@@ -82,6 +82,13 @@ body {
     font-weight: 700;
     font-display: swap;
 }
+@font-face {
+    font-family: 'Beeline Sans';
+    src: url('../sans/BeelineSans-Black.woff2') format('woff2'),
+         url('../sans/BeelineSans-Black.ttf') format('truetype');
+    font-weight: 800;
+    font-display: swap;
+}
 
 /* ========================================
    SCROLLBAR
@@ -803,48 +810,71 @@ body {
     line-height: 1.6;
     overflow-wrap: break-word;
     word-break: break-word;
+    max-width: 100%;
 }
-.skeleton-bubble {
-    display: block;
-    width: 100%;
+.message-bubble pre {
+    overflow-x: auto;
+    max-width: 100%;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 8px 0;
+    padding: 12px;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
 }
-.skeleton-line {
-    display: block;
-    width: 100%;
-    height: 12px;
-    border-radius: 6px;
-    background: linear-gradient(90deg, rgba(255,255,255,0.07) 25%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.07) 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    margin-bottom: 8px;
+.message-bubble code {
+    word-break: break-all;
 }
-.skeleton-line:nth-of-type(1) { width: 90%; }
-.skeleton-line:nth-of-type(2) { width: 75%; }
-.skeleton-line:nth-of-type(3) { width: 50%; margin-bottom: 0; }
-.skeleton-label {
-    display: block;
-    margin-top: 12px;
-    font-size: 13px;
+.message-bubble pre code {
+    word-break: normal;
+    white-space: pre-wrap;
+}
+.message-bubble ul,
+.message-bubble ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+.message-bubble li {
+    margin-bottom: 4px;
+}
+.message-bubble h1,
+.message-bubble h2,
+.message-bubble h3 {
+    margin: 12px 0 8px;
+}
+.message-bubble h1 { font-size: 20px; }
+.message-bubble h2 { font-size: 18px; }
+.message-bubble h3 { font-size: 16px; }
+.thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
     color: var(--text-muted);
-    animation: pulse-label 1.2s ease-in-out infinite;
+    white-space: nowrap;
 }
-[data-theme="light"] .skeleton-line {
-    background: linear-gradient(90deg, rgba(0,0,0,0.07) 25%, rgba(0,0,0,0.16) 50%, rgba(0,0,0,0.07) 75%);
-    background-size: 200% 100%;
+.thinking-text {
+    margin-right: 4px;
 }
-[data-theme="light"] .skeleton-label {
-    color: var(--text-muted);
+.thinking-indicator .dot {
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: dotBounce 1.4s ease-in-out infinite;
 }
-.message-assistant .message-bubble:has(.skeleton-bubble) {
-    min-height: 80px;
+.thinking-indicator .dot:nth-child(2) { animation-delay: 0.16s; }
+.thinking-indicator .dot:nth-child(3) { animation-delay: 0.32s; }
+[data-theme="light"] .thinking-indicator { color: var(--text-muted); }
+[data-theme="light"] .thinking-indicator .dot { background: var(--text-muted); }
+.message-assistant .message-bubble:has(.thinking-indicator) {
+    min-width: 130px;
 }
-@keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-}
-@keyframes pulse-label {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 1; }
+@keyframes dotBounce {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.2); }
 }
 .chat-input-area {
     padding: 16px 24px 24px;
