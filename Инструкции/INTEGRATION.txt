@@ -47,7 +47,7 @@ API-интерфейсы:
 Шаги:
 
   1) Клонируйте репозиторий:
-     git clone <repo-url>
+     git clone <https://github.com/Elissavetta/AI-assistant-for-Prompt-Engineering-.git>
      cd ai-prompt-trainer
 
   2) Создайте виртуальное окружение:

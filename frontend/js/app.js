@@ -827,16 +827,6 @@ class OnboardingTour {
         this.tooltip.style.cssText = 'position:fixed;background:var(--bg-secondary);border-radius:16px;padding:20px;max-width:400px;z-index:10002;box-shadow:0 8px 32px rgba(0,0,0,0.3);border:1px solid var(--border-color);pointer-events:auto;';
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.tooltip);
-
-        const skipBtn = document.createElement('button');
-        skipBtn.className = 'onboarding-skip';
-        skipBtn.textContent = 'Пропустить гайд';
-        skipBtn.style.cssText = 'position:fixed;bottom:24px;right:24px;background:rgba(26,26,26,0.9);border:1px solid var(--border-color);padding:10px 20px;border-radius:25px;color:var(--text-secondary);cursor:pointer;z-index:10003;font-family:inherit;font-size:14px;font-weight:500;backdrop-filter:blur(10px);transition:all 0.2s ease;';
-        skipBtn.addEventListener('mouseenter', () => { skipBtn.style.background = 'rgba(255,200,0,0.9)'; skipBtn.style.color = '#1A1A1A'; });
-        skipBtn.addEventListener('mouseleave', () => { skipBtn.style.background = 'rgba(26,26,26,0.9)'; skipBtn.style.color = 'var(--text-secondary)'; });
-        skipBtn.addEventListener('click', () => this.finish());
-        document.body.appendChild(skipBtn);
-        this.skipBtn = skipBtn;
     }
 
     createCutout(rect) {
@@ -927,7 +917,8 @@ class OnboardingTour {
         this.tooltip.innerHTML = `
             <div style="position:relative;">
                 <div class="onboarding-arrow ${arrowDirection}" style="position:absolute;${arrowDirection==='top'?'bottom:100%;left:50%;transform:translateX(-50%);border-width:0 10px 10px 10px;border-color:transparent transparent var(--bg-secondary) transparent;':''}${arrowDirection==='bottom'?'top:100%;left:50%;transform:translateX(-50%);border-width:10px 10px 0 10px;border-color:var(--bg-secondary) transparent transparent transparent;':''}${arrowDirection==='left'?'right:100%;top:50%;transform:translateY(-50%);border-width:10px 10px 10px 0;border-color:transparent var(--bg-secondary) transparent transparent;':''}${arrowDirection==='right'?'left:100%;top:50%;transform:translateY(-50%);border-width:10px 0 10px 10px;border-color:transparent transparent transparent var(--bg-secondary);':''}width:0;height:0;border-style:solid;"></div>
-                <h3 style="font-size:18px;margin-bottom:12px;color:var(--accent-bee);display:flex;align-items:center;">${step.title}</h3>
+                <button class="onboarding-close" style="position:absolute;top:8px;right:12px;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1;padding:4px;transition:color 0.2s ease;">✕</button>
+                <h3 style="font-size:18px;margin-bottom:12px;color:var(--accent-bee);display:flex;align-items:center;padding-right:28px;">${step.title}</h3>
                 <p style="font-size:14px;line-height:1.5;color:var(--text-secondary);margin-bottom:20px;">${step.description}</p>
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <div style="display:flex;gap:6px;">
@@ -943,6 +934,12 @@ class OnboardingTour {
 
         const nextBtn = this.tooltip.querySelector('.onboarding-next');
         const prevBtn = this.tooltip.querySelector('.onboarding-prev');
+        const closeBtn = this.tooltip.querySelector('.onboarding-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.finish());
+            closeBtn.addEventListener('mouseenter', () => { closeBtn.style.color = 'var(--accent-bee)'; });
+            closeBtn.addEventListener('mouseleave', () => { closeBtn.style.color = 'var(--text-muted)'; });
+        }
         if (nextBtn) {
             nextBtn.addEventListener('click', () => { this.removeCutout(); this.currentStep++; this.showStep(); });
             nextBtn.addEventListener('mouseenter', () => { nextBtn.style.transform = 'translateY(-1px)'; nextBtn.style.boxShadow = '0 4px 12px rgba(255,200,0,0.4)'; });
@@ -960,7 +957,6 @@ class OnboardingTour {
         this.removeCutout();
         if (this.overlay) this.overlay.remove();
         if (this.tooltip) this.tooltip.remove();
-        if (this.skipBtn) this.skipBtn.remove();
         try { localStorage.setItem('onboarding_completed', 'true'); } catch(e) {}
         this.showWelcomeMessage();
     }
